@@ -1,0 +1,21 @@
+{
+    "ATTRACT": 0,
+    "CONFUSION": 1,
+    "CUSTAP_BERRY": 2,
+    "CURSE": 3,
+    "DESTINY_BOND": 4,
+    "DISABLE": 5,
+    "FEINT": 6,
+    "FLASH_FIRE": 7,
+    "LEECH_SEED": 8,
+    "PERISH0": 9,
+    "PERISH1": 10,
+    "PERISH2": 11,
+    "PERISH3": 12,
+    "REFLECT": 13,
+    "SAFEGUARD": 14,
+    "SUBSTITUTE": 15,
+    "TRAPPED": 16,
+    "TYPECHANGE": 17,
+    "YAWN": 18
+}

@@ -1,0 +1,44 @@
+2024-08-22 14:27:03,544 - RandomPlayer 1 - ERROR - Unhandled exception raised while handling message:
+>battle-gen4randombattle-1
+|request|{"active":[{"moves":[{"move":"Toxic","id":"toxic","pp":16,"maxpp":16,"target":"normal","disabled":false},
+{"move":"Protect","id":"protect","pp":16,"maxpp":16,"target":"self","disabled":false},
+{"move":"Surf","id":"surf","pp":23,"maxpp":24,"target":"allAdjacent","disabled":false},
+{"move":"Wish","id":"wish","pp":16,"maxpp":16,"target":"self","disabled":false}]}],
+
+"side":{"name":"RandomPlayer 1","id":"p1","pokemon":
+[{"ident":"p1: Vaporeon","details":"Vaporeon, L83, M","condition":"351/351","active":true,"stats":{"atk":112,"def":147,"spa":230,"spd":205,"spe":156},
+"moves":["toxic","protect","surf","wish"],"baseAbility":"waterabsorb","item":"leftovers","pokeball":"pokeball"},
+{"ident":"p1: Steelix","details":"Steelix, L84, F","condition":"0 fnt","active":false,"stats":{"atk":191,"def":384,"spa":141,"spd":157,"spe":99},
+"moves":["roar","earthquake","stealthrock","ironhead"],"baseAbility":"rockhead","item":"leftovers","pokeball":"pokeball"},
+{"ident":"p1: Zapdos","details":"Zapdos, L77","condition":"265/265","active":false,"stats":{"atk":182,"def":175,"spa":237,"spd":183,"spe":199},
+"moves":["roost","uturn","hiddenpowerice","thunderbolt"],"baseAbility":"pressure","item":"leftovers","pokeball":"pokeball"},
+{"ident":"p1: Nidoking","details":"Nidoking, L84, M","condition":"252/273","active":false,"stats":{"atk":203,"def":178,"spa":191,"spd":174,"spe":191},
+"moves":["suckerpunch","earthquake","fireblast","icebeam"],"baseAbility":"poisonpoint","item":"expertbelt","pokeball":"pokeball"},
+{"ident":"p1: Zangoose","details":"Zangoose, L84, F","condition":"0 fnt","active":false,"stats":{"atk":241,"def":149,"spa":149,"spd":149,"spe":199},
+"moves":["nightslash","swordsdance","closecombat","return102"],"baseAbility":"immunity","item":"lifeorb","pokeball":"pokeball"},
+{"ident":"p1: Alakazam","details":"Alakazam, L81, M","condition":"222/222","active":false,"stats":{"atk":86,"def":120,"spa":265,"spd":184,"spe":241},
+"moves":["shadowball","psychic","calmmind","focusblast"],"baseAbility":"synchronize","item":"lifeorb","pokeball":"pokeball"}]},"rqid":34}
+|sentchoice|move surf
+Traceback (most recent call last):
+  File "/home/ygifoom/Documents/04 - Projects/glorIA/.venv/lib/python3.10/site-packages/poke_env/ps_client/ps_client.py", line 135, in _handle_message
+    await self._handle_battle_message(split_messages)  # type: ignore
+  File "/home/ygifoom/Documents/04 - Projects/glorIA/.venv/lib/python3.10/site-packages/poke_env/player/player.py", line 360, in _handle_battle_message
+    battle.parse_message(split_message)
+  File "/home/ygifoom/Documents/04 - Projects/glorIA/.venv/lib/python3.10/site-packages/poke_env/environment/abstract_battle.py", line 822, in parse_message
+    raise NotImplementedError(split_message)
+NotImplementedError: ['', 'sentchoice', 'move surf']
+Task exception was never retrieved
+future: <Task finished name='Task-35' coro=<PSClient._handle_message() done, defined at /home/ygifoom/Documents/04 - Projects/glorIA/.venv/lib/python3.10/site-packages/poke_env/ps_client/ps_client.py:121> exception=NotImplementedError(['', 'sentchoice', 'move surf'])>
+Traceback (most recent call last):
+  File "/home/ygifoom/Documents/04 - Projects/glorIA/.venv/lib/python3.10/site-packages/poke_env/ps_client/ps_client.py", line 190, in _handle_message
+    raise exception
+  File "/home/ygifoom/Documents/04 - Projects/glorIA/.venv/lib/python3.10/site-packages/poke_env/ps_client/ps_client.py", line 135, in _handle_message
+    await self._handle_battle_message(split_messages)  # type: ignore
+  File "/home/ygifoom/Documents/04 - Projects/glorIA/.venv/lib/python3.10/site-packages/poke_env/player/player.py", line 360, in _handle_battle_message
+    battle.parse_message(split_message)
+  File "/home/ygifoom/Documents/04 - Projects/glorIA/.venv/lib/python3.10/site-packages/poke_env/environment/abstract_battle.py", line 822, in parse_message
+    raise NotImplementedError(split_message)
+NotImplementedError: ['', 'sentchoice', 'move surf']
+
+
+/////////////////////////////////////////////////////

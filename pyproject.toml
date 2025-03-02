@@ -1,0 +1,27 @@
+[project]
+name = "glorIA"
+version = "0.1.0"
+description = "A pokemon showdown AI using reinforcement learning"
+authors = [
+    {name = "yGifoom", email = "giovisano@gmail.com"},
+]
+dependencies = [
+    "poke-env>=0.8.1",
+    "asyncio>=3.4.3",
+    "black>=24.8.0",
+    "tensorflow==2.10",
+    "keras>=2.10.0",
+    "matplotlib>=3.9.2",
+    "keras-rl2>=1.0.5",
+]
+requires-python = "==3.10"
+readme = "README.md"
+license = {text = "MIT"}
+
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+
+[tool.pdm]
+distribution = true
