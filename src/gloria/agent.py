@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import numpy as np
-import random
 from collections import deque
 from models import PolicyNetwork, ValueNetwork
 
@@ -23,7 +22,7 @@ class PPOAgent:
         
         Args:
             input_shape: Dimension of state input
-            num_actions: Number of possible actions
+            num_actions: Number of possible actions (can be None and set later)
             gamma: Discount factor
             epsilon: PPO clipping parameter
             actor_lr: Learning rate for policy network

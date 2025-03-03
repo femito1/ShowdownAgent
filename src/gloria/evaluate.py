@@ -12,6 +12,10 @@ def test(agent, environment, nb_episodes=100):
     victories = 0
     total_reward = 0
     
+    # Ensure we're starting with a clean state
+    environment._stop_challenge_loop()
+    environment.start_challenging(n_challenges=1)  # Start with just one challenge
+    
     for e in range(nb_episodes):
         environment.reset()
         s = np.reshape(environment.embed_battle(environment.current_battle), [1, agent.input_shape])
@@ -30,17 +34,26 @@ def test(agent, environment, nb_episodes=100):
                     victories += 1
                 total_reward += episode_reward
                 print(f"Episode {e + 1}/{nb_episodes} finished. Reward: {episode_reward:.2f}")
+                
+                # Start a new challenge for the next episode if not the last one
+                if e < nb_episodes - 1:
+                    environment._stop_challenge_loop()
+                    environment.start_challenging(n_challenges=1)
     
     print(f"Test results: {victories}/{nb_episodes} victories ({victories/nb_episodes*100:.1f}%)")
     print(f"Average reward: {total_reward/nb_episodes:.2f}")
     
+    # Clean up
+    environment._stop_challenge_loop()
+    environment.complete_current_battle()
     environment.close()
+    
     return victories/nb_episodes, total_reward/nb_episodes
 
 def evaluate_against_opponents(agent, battle_format="gen4randombattle"):
     """Evaluate an agent against multiple standard opponents"""
     
-    # Setup account configurations
+    # Setup account configurations with unique names to avoid conflicts
     random_config = AccountConfiguration("random_opp", None)
     max_power_config = AccountConfiguration("max_power", None)
     heuristic_config = AccountConfiguration("heuristic", None)
@@ -51,18 +64,18 @@ def evaluate_against_opponents(agent, battle_format="gen4randombattle"):
     max_power_player = MaxBasePowerPlayer(battle_format=battle_format, account_configuration=max_power_config)
     heuristic_player = SimpleHeuristicsPlayer(battle_format=battle_format, account_configuration=heuristic_config)
     
-    # Create evaluation environments
+    # Create evaluation environments - don't start challenging yet
     random_env = SimpleRLPlayer(
         battle_format=battle_format, opponent=random_player, 
-        start_challenging=True, account_configuration=agent_config
+        start_challenging=False, account_configuration=agent_config
     )
     max_power_env = SimpleRLPlayer(
         battle_format=battle_format, opponent=max_power_player, 
-        start_challenging=True, account_configuration=agent_config
+        start_challenging=False, account_configuration=agent_config
     )
     heuristic_env = SimpleRLPlayer(
         battle_format=battle_format, opponent=heuristic_player, 
-        start_challenging=True, account_configuration=agent_config
+        start_challenging=False, account_configuration=agent_config
     )
     
     # Run evaluations

@@ -174,6 +174,10 @@ with open(DATA_DIR + "gen4effects.json", "r") as f:
 
 class GlorIA(Gen4EnvSinglePlayer):  # not inhereting from Gen4EnvSinglePlayer temorarily to test the embed_battle method
     def __init__(self, *args, **kwargs):
+        # If called without arguments, provide a default opponent
+        if not args and 'opponent' not in kwargs:
+            from poke_env.player.random_player import RandomPlayer
+            kwargs['opponent'] = RandomPlayer(battle_format="gen4randombattle")
         super().__init__(*args, **kwargs)
         self.last_move_dict = {}
 

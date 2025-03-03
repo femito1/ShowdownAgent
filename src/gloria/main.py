@@ -1,15 +1,19 @@
 from train import train_ppo_agent
 from evaluate import evaluate_against_opponents
-from agent import PPOAgent
+import time
 
 def main():
     # Training phase
     print("======= TRAINING PHASE =======")
     agent = train_ppo_agent(
-        num_episodes=100,  # Increase for better performance
+        num_episodes=6,  # Increase for better performance
         batch_size=64,     # Larger batch size for more stable learning
         save_path="ppo_model"
     )
+    
+    # Add a delay to ensure all battles are properly completed
+    print("\nWaiting for all battles to complete before starting evaluation...")
+    time.sleep(5)  # 5 second delay
     
     # Evaluation phase
     print("\n======= EVALUATION PHASE =======")
@@ -19,5 +23,4 @@ def main():
     
     print("\nTraining and evaluation complete!")
 
-if __name__ == "__main__":
-    main() 
+main()

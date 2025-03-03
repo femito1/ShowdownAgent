@@ -6,21 +6,36 @@ from environment import SimpleRLPlayer
 from agent import PPOAgent
 
 def train_ppo_agent(num_episodes=6, batch_size=64, ppo_epochs=4, 
-                   save_path=None, save_interval=10):
+                   save_path=None, save_interval=50):
     """Train a PPO agent for Pokemon battles with advanced features"""
     
-    # Configuration and environment setup
-    config2, config5 = AccountConfiguration("Opp2", None), AccountConfiguration("GG2", None)
-    opponent = RandomPlayer(battle_format="gen4randombattle",
-                            account_configuration=config2)
+    # Configuration and environment setup with explicit player names
+    agent_username = "GlorIAAgent"
+    opponent_username = "RandomOpp"
+    
+    print(f"Setting up players: {agent_username} vs {opponent_username}")
+    
+    # Create account configurations with consistent names
+    agent_config = AccountConfiguration(agent_username, None)
+    opponent_config = AccountConfiguration(opponent_username, None)
+    
+    # Create players with explicit names
+    opponent = RandomPlayer(
+        battle_format="gen4randombattle",
+        account_configuration=opponent_config
+    )
+    
     train_env = SimpleRLPlayer(
-        battle_format="gen4randombattle", opponent=opponent, start_challenging=False,
-        account_configuration=config5
+        battle_format="gen4randombattle", 
+        opponent=opponent, 
+        start_challenging=False,
+        account_configuration=agent_config
     )
 
-    # Compute dimensions
-    input_shape = 3023  # subject to change based on your embedding size
+    print("Initializing environment and agent...")
+    input_shape = 2998
     num_actions = train_env.action_space_size()
+    print(f"Action space size: {num_actions}")
     
     # Create agent with advanced PPO features
     agent = PPOAgent(
@@ -38,27 +53,41 @@ def train_ppo_agent(num_episodes=6, batch_size=64, ppo_epochs=4,
         mini_batch_size=batch_size
     )
     
-    # Start training
-    train_env.start_challenging(n_challenges=num_episodes)
-    
     episode_rewards = []
     episode_lengths = []
-
+    train_env.reset()
+    # Start with just one challenge at a time and ensure we wait for it to complete
+    print(f"Starting training with {agent_username} vs {opponent_username}")
+    
     for e in range(1, num_episodes + 1):
+        print(f"\nStarting episode {e}/{num_episodes}")
+        print("Starting a new challenge...")
         train_env.reset()
+        # Start a single challenge for this episode
+        train_env._stop_challenge_loop()  # Stop any existing challenges
+        train_env.start_challenging(n_challenges=1)
+        
+
+        print("Battle is ready, getting initial state...")
         initial_state = train_env.embed_battle(train_env.current_battle)
+        print(f"Initial state shape: {initial_state.shape}")
+        
         state = np.reshape(initial_state, [1, agent.input_shape])
         done = False
         steps = 0
         episode_reward = 0
         
         # Run the episode
+        print("Starting episode loop...")
         while not done:
             # Get action, probability, and value estimate
             action, action_prob, value = agent.act(state)
+            print(f"Step {steps+1}: Taking action {action}")
             
             # Take action in the environment
-            next_state, reward, done, _, info = train_env.step(action)
+            next_state, reward, done, _, _ = train_env.step(action)
+            print(f"Reward: {reward}, Done: {done}")
+            
             next_state = np.reshape(next_state, [1, agent.input_shape])
             
             # Store transition
@@ -67,12 +96,20 @@ def train_ppo_agent(num_episodes=6, batch_size=64, ppo_epochs=4,
             state = next_state
             steps += 1
             episode_reward += reward
-            
+        
+        print("Waiting before next episode...")
+        
         # Track episode statistics
         episode_rewards.append(episode_reward)
         episode_lengths.append(steps)
         
+        # Ensure we stop challenging before the next episode
+        print("Stopping challenge loop...")
+        train_env._stop_challenge_loop()
+        train_env.complete_current_battle()
+        
         # Update policy after each episode
+        print("Updating policy...")
         policy_loss, value_loss, entropy = agent.update()
         
         # Print progress
@@ -82,14 +119,26 @@ def train_ppo_agent(num_episodes=6, batch_size=64, ppo_epochs=4,
         
         # Periodically save the model
         if save_path and e % save_interval == 0:
+            print(f"Saving model checkpoint at episode {e}...")
             agent.save(f"{save_path}_episode_{e}")
+            
+
+        
+    
 
     # Reset environment
+    print("Training complete, cleaning up...")
     train_env.reset_env(restart=False)
+    
+    # Explicitly stop challenging and wait for battles to complete
+    print("Stopping challenge loop...")
+    train_env._stop_challenge_loop()
+    train_env.complete_current_battle()
     train_env.close()
     
     # Save the final trained model
     if save_path:
+        print(f"Saving final model to {save_path}...")
         agent.save(save_path)
     
     # Print training summary
@@ -97,18 +146,9 @@ def train_ppo_agent(num_episodes=6, batch_size=64, ppo_epochs=4,
     mean_length = np.mean(episode_lengths[-20:]) if len(episode_lengths) >= 20 else np.mean(episode_lengths)
     
     print("\n===== TRAINING SUMMARY =====")
-    print(f"Episodes completed: {num_episodes}")
+    print(f"Episodes completed: {len(episode_rewards)}/{num_episodes}")
     print(f"Average reward (last 20 episodes): {mean_reward:.2f}")
     print(f"Average episode length (last 20 episodes): {mean_length:.2f}")
     
     return agent
 
-if __name__ == "__main__":
-    # Train with advanced PPO settings
-    agent = train_ppo_agent(
-        num_episodes=200,  # More episodes for better learning
-        batch_size=128,    # Larger batch size for more stable updates
-        ppo_epochs=10,     # Multiple optimization epochs per episode
-        save_path="advanced_ppo_model",
-        save_interval=20
-    ) 
