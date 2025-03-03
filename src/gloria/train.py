@@ -1,11 +1,10 @@
 import numpy as np
 from poke_env import AccountConfiguration
 from poke_env.player import RandomPlayer
-
 from environment import SimpleRLPlayer
 from agent import PPOAgent
 
-def train_ppo_agent(num_episodes=6, batch_size=64, ppo_epochs=4, 
+def train_ppo_agent(num_episodes=6, batch_size=64, ppo_epochs=1, 
                    save_path=None, save_interval=50):
     """Train a PPO agent for Pokemon battles with advanced features"""
     
@@ -55,18 +54,14 @@ def train_ppo_agent(num_episodes=6, batch_size=64, ppo_epochs=4,
     
     episode_rewards = []
     episode_lengths = []
-    train_env.reset()
     # Start with just one challenge at a time and ensure we wait for it to complete
     print(f"Starting training with {agent_username} vs {opponent_username}")
-    
+    train_env.start_challenging(n_challenges=num_episodes)
     for e in range(1, num_episodes + 1):
         print(f"\nStarting episode {e}/{num_episodes}")
         print("Starting a new challenge...")
-        train_env.reset()
         # Start a single challenge for this episode
-        train_env._stop_challenge_loop()  # Stop any existing challenges
-        train_env.start_challenging(n_challenges=1)
-        
+        train_env.reset()
 
         print("Battle is ready, getting initial state...")
         initial_state = train_env.embed_battle(train_env.current_battle)
@@ -97,16 +92,13 @@ def train_ppo_agent(num_episodes=6, batch_size=64, ppo_epochs=4,
             steps += 1
             episode_reward += reward
         
+        
         print("Waiting before next episode...")
         
         # Track episode statistics
         episode_rewards.append(episode_reward)
         episode_lengths.append(steps)
         
-        # Ensure we stop challenging before the next episode
-        print("Stopping challenge loop...")
-        train_env._stop_challenge_loop()
-        train_env.complete_current_battle()
         
         # Update policy after each episode
         print("Updating policy...")
@@ -132,8 +124,6 @@ def train_ppo_agent(num_episodes=6, batch_size=64, ppo_epochs=4,
     
     # Explicitly stop challenging and wait for battles to complete
     print("Stopping challenge loop...")
-    train_env._stop_challenge_loop()
-    train_env.complete_current_battle()
     train_env.close()
     
     # Save the final trained model

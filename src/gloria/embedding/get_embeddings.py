@@ -1,7 +1,6 @@
 import json
-from poke_env.data import GenData
 from poke_env.data.normalize import to_id_str
-from poke_env.environment import Battle, Pokemon, Weather
+from poke_env.environment import Battle, Pokemon
 from poke_env.player import Gen4EnvSinglePlayer
 import numpy as np
 from gymnasium.spaces import Box

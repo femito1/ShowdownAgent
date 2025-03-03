@@ -17,7 +17,7 @@ def main():
     
     # Evaluation phase
     print("\n======= EVALUATION PHASE =======")
-    results = evaluate_against_opponents(agent)
+    #results = evaluate_against_opponents(agent)
     
     # You could save the results to a file, plot them, etc.
     
