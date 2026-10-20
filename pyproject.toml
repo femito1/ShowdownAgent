@@ -13,6 +13,10 @@ dependencies = [
     "tensorboard>=2.17",
 ]
 
+[project.optional-dependencies]
+# gloria.search; must be built for gen4, see the gloria.search docstring
+search = ["poke-engine>=0.0.48"]
+
 [build-system]
 requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"

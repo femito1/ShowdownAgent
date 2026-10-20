@@ -24,6 +24,8 @@ sets (from Showdown's random-battle data), and poke-env's slot-based 10-action s
   60M 1711 > 46M 1663 > 31M 1635 > 10M 1493 > heuristic 1457 > 2.5M 1346 > max_power 1194.
   Every checkpoint beats every earlier one, so self-play improves rather than cycles; gains
   slow after ~30M steps.
+- **Search** (`gloria.search`, network-guided poke-engine MCTS, 300 ms/move, 4 sampled
+  opponent sets): beats the raw 60M network 75% (200 battles) and the heuristic bot 88% (100).
 - **Ladder**: 13-7 in the first 20 real games (Showdown also counts 5 forfeits from dropped
   connections). Showdown locks datacenter IPs, so ladder games must run from a home connection.
 
@@ -38,6 +40,8 @@ sets (from Showdown's random-battle data), and poke-env's slot-based 10-action s
 | `src/gloria/play.py` | play on the official server (ladder / challenges) |
 | `src/gloria/pool.py` | opponent pool: past snapshots + baseline bots |
 | `src/gloria/tournament.py` | round-robin between checkpoints, Elo |
+| `src/gloria/search.py` | `SearchPlayer`: network-guided poke-engine MCTS over sampled determinizations (gen4) |
+| `src/gloria/engine_worker.py` | poke-engine search subprocesses used by `search.py` |
 | `scripts/` | Showdown server launchers, data builder, RunPod setup |
 
 ## Setup

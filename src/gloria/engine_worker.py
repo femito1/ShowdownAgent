@@ -1,0 +1,71 @@
+"""poke-engine search worker processes (used by `gloria.search`).
+
+poke-engine holds the GIL while it searches, so parallel searches need processes. Workers are
+plain subprocesses (`python -m gloria.engine_worker`) speaking one JSON object per line, so they
+import only poke-engine (no torch / poke-env) and never re-run the caller's __main__.
+"""
+
+import asyncio
+import json
+import sys
+
+import poke_engine as pe
+
+
+def search(state_str: str, ms: int) -> list[tuple[str, int, float]]:
+    """MCTS on one determinization -> [(our engine choice, visits, total score in [0, visits])]."""
+    result = pe.monte_carlo_tree_search(pe.State.from_string(state_str), duration_ms=ms)
+    return [(o.move_choice, o.visits, o.total_score) for o in result.side_one]
+
+
+def main() -> None:
+    for line in sys.stdin:
+        req = json.loads(line)
+        try:
+            reply = {"ok": search(req["state"], req["ms"])}
+        except BaseException as e:  # Rust panics surface as pyo3 PanicException (a BaseException)
+            reply = {"error": f"{type(e).__name__}: {e}"}
+        sys.stdout.write(json.dumps(reply) + "\n")
+        sys.stdout.flush()
+
+
+class EnginePool:
+    """`n` worker subprocesses on the running event loop; `search` awaits a free one."""
+
+    def __init__(self, n: int):
+        self.n = n
+        self.idle: asyncio.Queue | None = None
+
+    @staticmethod
+    async def _spawn() -> asyncio.subprocess.Process:
+        return await asyncio.create_subprocess_exec(
+            sys.executable, "-m", "gloria.engine_worker",
+            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, limit=2**24,
+        )
+
+    async def search(self, state_str: str, ms: int) -> list[tuple[str, int, float]]:
+        if self.idle is None:
+            self.idle = asyncio.Queue()
+            for _ in range(self.n):
+                self.idle.put_nowait(await self._spawn())
+        proc, line = await self.idle.get(), b""
+        try:
+            proc.stdin.write((json.dumps({"state": state_str, "ms": ms}) + "\n").encode())
+            await proc.stdin.drain()
+            line = await proc.stdout.readline()
+        finally:
+            if not line:  # crashed (e.g. a Rust abort): replace it
+                if proc.returncode is None:
+                    proc.kill()
+                proc = await self._spawn()
+            self.idle.put_nowait(proc)
+        if not line:
+            raise RuntimeError("poke-engine worker died")
+        reply = json.loads(line)
+        if "error" in reply:
+            raise RuntimeError(f"poke-engine: {reply['error']}")
+        return [tuple(o) for o in reply["ok"]]
+
+
+if __name__ == "__main__":
+    main()
