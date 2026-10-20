@@ -17,6 +17,16 @@ Differences from the thesis: a transformer over field + 12 Pokémon tokens inste
 learned embeddings for species/moves/items/abilities, a movepool prior for unrevealed opponent
 sets (from Showdown's random-battle data), and poke-env's slot-based 10-action space.
 
+## Results (gen4randombattle, 60M self-play steps, 2026-10-20)
+- **vs baseline bots** (training evals, 200 battles): 83.5% vs `SimpleHeuristicsPlayer`, 95% vs
+  `MaxBasePowerPlayer` — on par with the thesis (~80% at 40M, ~85% at 150M steps).
+- **Checkpoint tournament** (`gloria.tournament`, 100 battles per pairing, Bradley-Terry Elo):
+  60M 1711 > 46M 1663 > 31M 1635 > 10M 1493 > heuristic 1457 > 2.5M 1346 > max_power 1194.
+  Every checkpoint beats every earlier one, so self-play improves rather than cycles; gains
+  slow after ~30M steps.
+- **Ladder**: 13-7 in the first 20 real games (Showdown also counts 5 forfeits from dropped
+  connections). Showdown locks datacenter IPs, so ladder games must run from a home connection.
+
 ## Layout
 | | |
 |---|---|
@@ -26,6 +36,8 @@ sets (from Showdown's random-battle data), and poke-env's slot-based 10-action s
 | `src/gloria/train.py` | PPO training with eval-vs-baselines and checkpoints |
 | `src/gloria/evaluate.py` | win rates vs Random / MaxBasePower / SimpleHeuristics |
 | `src/gloria/play.py` | play on the official server (ladder / challenges) |
+| `src/gloria/pool.py` | opponent pool: past snapshots + baseline bots |
+| `src/gloria/tournament.py` | round-robin between checkpoints, Elo |
 | `scripts/` | Showdown server launchers, data builder, RunPod setup |
 
 ## Setup
@@ -45,7 +57,12 @@ tensorboard --logdir runs
 Throughput is bound by battle latency in the lockstep vector env, not CPU or GPU: on a 31-vCPU
 RTX 3090 pod, 96 concurrent battles give ~1.4k steps/s (~5M steps/hour).
 
-On a fresh RunPod GPU pod: `bash scripts/pod_setup.sh && scripts/pod_train.sh 12 96 --total-steps 50000000`.
+Add `--pool-battles N` to also train against an opponent pool (past snapshots, added every
+`--snapshot-every` steps, plus baseline bots); seed it with `python -m gloria.pool CKPTS... --out DIR`.
+
+On RunPod, `scripts/pod_retry_deploy.py` finds a working pod and runs `scripts/pod_launch_resume.sh`;
+the pod pushes results to a private git repo every 20 min (`scripts/sync_results.sh`), fetch them
+with `scripts/fetch_results.sh`, and stops itself when training ends.
 
 ## Evaluate / play
 ```bash
