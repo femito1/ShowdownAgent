@@ -25,6 +25,17 @@ def thesis_lr(progress_remaining: float) -> float:
     return 10**-4.23 / (8 * x + 1) ** 1.5
 
 
+class WallClockLimit(BaseCallback):
+    """Stops training after `hours`; learn() then returns and final_model is saved."""
+
+    def __init__(self, hours: float):
+        super().__init__()
+        self.deadline = time.time() + hours * 3600
+
+    def _on_step(self) -> bool:
+        return time.time() < self.deadline
+
+
 class EvalCallback(BaseCallback):
     """Every `every` steps: win rate vs baselines -> tensorboard; keep the best checkpoint."""
 
@@ -97,6 +108,7 @@ def main():
     p.add_argument("--checkpoint-every", type=int, default=5_000_000)
     p.add_argument("--run-dir", type=Path, default=Path("runs") / time.strftime("%Y%m%d-%H%M%S"))
     p.add_argument("--resume", type=Path, help="checkpoint .zip to continue from")
+    p.add_argument("--max-hours", type=float, help="stop (and save) after this much wall-clock time")
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = p.parse_args()
 
@@ -137,7 +149,7 @@ def main():
                            name_prefix="ppo"),
         EvalCallback(args.format, ports[0], args.eval_every, args.eval_battles, ("heuristic", "max_power"),
                      args.run_dir),
-    ])
+    ] + ([WallClockLimit(args.max_hours)] if args.max_hours else []))
     try:
         model.learn(
             total_timesteps=args.total_steps - model.num_timesteps,
