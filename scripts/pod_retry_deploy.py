@@ -8,7 +8,7 @@ RPC = str(Path.home() / ".local/bin/runpodctl")
 SSHKEY = str(Path.home() / ".runpod/ssh/runpodctl-ssh-key")
 # RTX 3080 Ti dropped: it kept landing on a host in ES that never boots containers.
 GPUS = [("NVIDIA GeForce RTX 3090", 16), ("NVIDIA GeForce RTX 3090", 12),
-        ("NVIDIA RTX PRO 4500 Blackwell", 12), ("NVIDIA GeForce RTX 5090", 16)]
+        ("NVIDIA RTX PRO 4500 Blackwell", 12)]  # RTX 5090 ($0.69/h) dropped: ~3x fewer steps per dollar
 # Dead man's switch: delete the pod 40 min after boot unless training was launched.
 GUARD = ("bash -c '(sleep 2400; [ -f /workspace/launched ] || runpodctl remove pod $RUNPOD_POD_ID) & "
          "exec /start.sh'")
