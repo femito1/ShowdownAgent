@@ -12,10 +12,12 @@ from pathlib import Path
 import torch
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList, CheckpointCallback
+from stable_baselines3.common.vec_env import VecMonitor
 
-from gloria.env import make_selfplay_vec_env
+from gloria.env import ConcatVecEnv, make_selfplay_vec_env
 from gloria.evaluate import Evaluator
 from gloria.model import MaskedPolicy
+from gloria.pool import make_pool_vec_env, save_snapshot
 
 
 def thesis_lr(progress_remaining: float) -> float:
@@ -36,6 +38,25 @@ class WallClockLimit(BaseCallback):
         return time.time() < self.deadline
 
 
+class SnapshotCallback(BaseCallback):
+    """Adds the current policy to the opponent pool every `every` steps."""
+
+    def __init__(self, pool_dir: Path, every: int):
+        super().__init__()
+        self.pool_dir, self.every = pool_dir, every
+
+    def _on_training_start(self) -> None:
+        self.next = self.num_timesteps + self.every
+
+    def _on_step(self) -> bool:
+        return True
+
+    def _on_rollout_end(self) -> None:
+        if self.num_timesteps >= self.next:
+            self.next += self.every
+            save_snapshot(self.model.policy, self.pool_dir, f"{self.num_timesteps:011d}")
+
+
 class EvalCallback(BaseCallback):
     """Every `every` steps: win rate vs baselines -> tensorboard; keep the best checkpoint."""
 
@@ -46,6 +67,9 @@ class EvalCallback(BaseCallback):
         self.opponent_names, self.save_dir = opponents, save_dir
         self.next_eval, self.best = every, -1.0
         self.evaluator: Evaluator | None = None
+
+    def _on_training_start(self) -> None:
+        self.next_eval = self.num_timesteps + self.every  # don't eval every rollout after --resume
 
     def _on_step(self) -> bool:
         return True
@@ -81,6 +105,11 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--format", default="gen4randombattle")
     p.add_argument("--n-battles", type=int, default=39, help="concurrent self-play battles")
+    p.add_argument("--pool-battles", type=int, default=0,
+                   help="extra concurrent battles vs the opponent pool (past snapshots + baseline bots)")
+    p.add_argument("--pool-dir", type=Path, help="opponent pool directory (default: RUN_DIR/pool)")
+    p.add_argument("--p-baseline", type=float, default=0.2, help="share of pool battles vs baseline bots")
+    p.add_argument("--snapshot-every", type=int, default=2_500_000, help="add policy to the pool every N steps")
     p.add_argument("--n-cpus", type=int, default=None, help="env worker processes (default: one per battle)")
     p.add_argument("--ports", default="8000", help="Showdown server ports, e.g. 8000-8007")
     p.add_argument("--total-steps", type=int, default=150_000_000)
@@ -115,12 +144,24 @@ def main():
     torch.set_float32_matmul_precision("high")  # TF32 on Ampere+: faster PPO updates
     ports = parse_ports(args.ports)
     shaping = dict(zip(("fainted_value", "hp_value", "status_value"), args.shaping))
-    env = make_selfplay_vec_env(args.n_battles, ports, args.format, shaping, args.n_cpus)
     args.run_dir.mkdir(parents=True, exist_ok=True)
+    pool_dir = args.pool_dir or args.run_dir / "pool"
+    env = make_selfplay_vec_env(args.n_battles, ports, args.format, shaping, args.n_cpus)
+    if args.pool_battles:
+        pool_dir.mkdir(parents=True, exist_ok=True)
+        env = ConcatVecEnv([env, make_pool_vec_env(args.pool_battles, ports[::-1], args.format, pool_dir,
+                                                   shaping, args.p_baseline)])
+    env = VecMonitor(env)
 
     if args.resume:
         model = PPO.load(args.resume, env=env, device=args.device)
         model.learning_rate, model.lr_schedule = thesis_lr, thesis_lr  # schedules aren't pickled reliably
+        n_steps = max(1, args.rollout // env.num_envs)  # keep ~args.rollout transitions per update
+        if n_steps != model.n_steps:
+            model.n_steps = n_steps
+            model.rollout_buffer = model.rollout_buffer_class(
+                n_steps, model.observation_space, model.action_space, device=model.device, gamma=model.gamma,
+                gae_lambda=model.gae_lambda, n_envs=env.num_envs, **model.rollout_buffer_kwargs)
     else:
         model = PPO(
             MaskedPolicy, env,
@@ -141,7 +182,7 @@ def main():
             verbose=1,
         )
     n_params = sum(p.numel() for p in model.policy.parameters())
-    print(f"{env.num_envs} sub-envs ({args.n_battles} battles) on ports {ports}, "
+    print(f"{env.num_envs} sub-envs ({args.n_battles} self-play + {args.pool_battles} pool battles) on ports {ports}, "
           f"n_steps={model.n_steps}, params={n_params:,}, device={model.device}")
 
     callbacks = CallbackList([
@@ -149,7 +190,8 @@ def main():
                            name_prefix="ppo"),
         EvalCallback(args.format, ports[0], args.eval_every, args.eval_battles, ("heuristic", "max_power"),
                      args.run_dir),
-    ] + ([WallClockLimit(args.max_hours)] if args.max_hours else []))
+    ] + ([WallClockLimit(args.max_hours)] if args.max_hours else [])
+      + ([SnapshotCallback(pool_dir, args.snapshot_every)] if args.pool_battles else []))
     try:
         model.learn(
             total_timesteps=args.total_steps - model.num_timesteps,
