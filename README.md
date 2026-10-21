@@ -24,8 +24,10 @@ sets (from Showdown's random-battle data), and poke-env's slot-based 10-action s
   60M 1711 > 46M 1663 > 31M 1635 > 10M 1493 > heuristic 1457 > 2.5M 1346 > max_power 1194.
   Every checkpoint beats every earlier one, so self-play improves rather than cycles; gains
   slow after ~30M steps.
-- **Search** (`gloria.search`, network-guided poke-engine MCTS, 300 ms/move, 4 sampled
-  opponent sets): beats the raw 60M network 75% (200 battles) and the heuristic bot 88% (100).
+- **Search** (`gloria.search`, network-guided poke-engine MCTS over 4 sampled opponent sets):
+  at 300 ms/move it beats the raw 60M network 75% (200 battles); the tuned defaults (1000 ms,
+  prior weight 0.25, battle-history tracking) beat that config 59% head-to-head (150) and the
+  heuristic bot 97% (100).
 - **Ladder**: 13-7 in the first 20 real games (Showdown also counts 5 forfeits from dropped
   connections). Showdown locks datacenter IPs, so ladder games must run from a home connection.
 

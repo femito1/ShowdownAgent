@@ -11,15 +11,22 @@ Each decision we
      optionally only among the network's top-k actions, and play the argmax.
 Any failure (conversion, engine panic, unmappable choice) falls back to the network's argmax.
 
-Approximations / ignored (documented, not bugs): opponent PP = what poke-env tracks; hidden power
-is always 70 BP and its type for the opponent comes from the sampled set; the random-battle item
-logic is a simplified re-implementation; volatile durations, wish, future sight, rest turns, the
-opponent's choice lock and toxic counter, and partial-trap / disable / encore timers are not
-transferred; substitute HP is assumed to be 1/4 max HP; weather from abilities is permanent
-(gen4), other weather lasts 5 turns from when we first saw it; unrevealed opponent mons are
-uniformly sampled species (no team-generation constraints).
+Tracked beyond what poke-env exposes (`History`, read from the battle log): Wish and Future Sight / Doom
+Desire timers, Rest's fixed sleep, both sides' last move (choice lock, encore, fake out), and mons seen using
+two different moves in one stint (no choice item). Unrevealed opponent mons follow the gen4 random team rules
+(`sample_species`).
 
-    python -m gloria.search runs/<run>/best_model.zip --opponent policy --n-battles 100 --ms 300
+Approximations / ignored (documented, not bugs): opponent PP = what poke-env tracks; hidden power is always
+70 BP and its type for the opponent comes from the sampled set; the random-battle item logic is a simplified
+re-implementation; taunt / encore / confusion / partial-trap / disable timers are not transferred (the gen4
+engine does not model most of them); substitute HP is assumed to be 1/4 max HP; weather from abilities is
+permanent (gen4), other weather lasts 5 turns from when we first saw it.
+
+    python -m gloria.search runs/<run>/best_model.zip --opponent heuristic --n-battles 100
+    python -m gloria.search runs/<run>/best_model.zip --opponent search --opp-ms 300 --opp-prior-weight 0.5
+
+Defaults (1000 ms, 4 samples, prior_weight 0.25, no top-k) come from head-to-head tuning: prior 0.25 beat 0.5
+(which beat 1.0 and top-k 3), 0.1 and 8 samples were no better, 1000 ms beat 300 ms.
 """
 
 import argparse
@@ -167,7 +174,111 @@ def sample_set(species: str, revealed_moves: list[str], ability: str | None,
     return chosen["role"], moves, ability
 
 
+TYPES = ["BUG", "DARK", "DRAGON", "ELECTRIC", "FIGHTING", "FIRE", "FLYING", "GHOST", "GRASS", "GROUND", "ICE",
+         "NORMAL", "POISON", "PSYCHIC", "ROCK", "STEEL", "WATER"]
+INCOMPATIBLE = [({"blissey"}, {"chansey"}), ({"illumise"}, {"volbeat"}),
+                ({"parasect", "jynx", "toxicroak"}, {"ninetales", "groudon"}),
+                ({"shedinja"}, {"tyranitar", "hippowdon", "abomasnow"})]
+
+
+@cache
+def species_info(species: str) -> tuple[str, list[str], list[int]]:
+    """(base species, types, Showdown's getEffectiveness of every attacking type: >0 weak, >1 doubly weak)."""
+    dex = GEN.pokedex[species]
+    types = [t.upper() for t in dex["types"]]
+    eff = [sum({2: 1, 0.5: -1}.get(GEN.type_chart[d][a], 0) for d in types) for a in TYPES]  # immunity counts 0
+    return norm(dex.get("baseSpecies", species)), types, eff
+
+
+@cache
+def base_species_pool() -> dict[str, list[str]]:
+    pool: dict[str, list[str]] = {}
+    for sp in role_sets():
+        if sp in GEN.pokedex:
+            pool.setdefault(species_info(sp)[0], []).append(sp)
+    return pool
+
+
+def sample_species(known: list[str], n: int, rng: random.Random) -> list[str]:
+    """`n` more team members drawn like gen4 randomTeam() (gen5/teams.ts): uniform base species, then forme;
+    species clause; at most 2 per type, 3 weak / 1 doubly weak to any type, one level 100; a few banned pairs.
+    The revealed mons count towards the limits (an approximation of the posterior)."""
+    team, types, weak, dweak = [], {}, [0] * len(TYPES), [0] * len(TYPES)
+    lv100 = 0
+
+    def add(sp: str) -> None:
+        nonlocal lv100
+        team.append(sp)
+        for t in species_info(sp)[1]:
+            types[t] = types.get(t, 0) + 1
+        for i, e in enumerate(species_info(sp)[2]):
+            weak[i] += e > 0
+            dweak[i] += e > 1
+        lv100 += levels().get(sp, 80) == 100
+
+    def ok(sp: str) -> bool:
+        (_, ts, eff), ids = species_info(sp), set(team)
+        return (all(types.get(t, 0) < 2 for t in ts) and all(w < 3 for w, e in zip(weak, eff) if e > 0)
+                and all(d < 1 for d, e in zip(dweak, eff) if e > 1)
+                and (lv100 < 1 or levels().get(sp, 80) != 100)
+                and not any((sp in a and ids & b) or (sp in b and ids & a) for a, b in INCOMPATIBLE))
+
+    for sp in known:
+        if sp in GEN.pokedex:
+            add(sp)
+    taken = {species_info(sp)[0] for sp in team}
+    bases = [b for b in base_species_pool() if b not in taken]
+    rng.shuffle(bases)
+    out, skipped = [], []
+    for b in bases:
+        if len(out) == n:
+            break
+        sp = rng.choice(base_species_pool()[b])
+        if ok(sp):
+            add(sp)
+            out.append(sp)
+        else:
+            skipped.append(sp)
+    return out + skipped[:n - len(out)]  # constraints unsatisfiable: relax them
+
+
 # ---------------------------------------------------------------- poke-env -> poke-engine
+
+class History:
+    """What poke-env does not track, read from the battle log: per side ('p1' / 'p2') the turn Wish and Future
+    Sight / Doom Desire were last used (and by whom), mons asleep from Rest, and mons that used two different
+    moves in one stint on the field (so they cannot hold a choice item)."""
+
+    def __init__(self, battle: AbstractBattle):
+        self.wish: dict[str, int] = {}
+        self.future: dict[str, tuple[int, str]] = {}
+        self.rest: set[str] = set()
+        self.unlocked: set[str] = set()
+        stint: dict[str, set[str]] = {}
+        turn = 0
+        for ev in battle._replay_data:
+            if len(ev) < 3:
+                continue
+            kind, key = ev[1], re.sub(r"^(p\d)[a-c]:", r"\1:", ev[2])  # 'p2a: Blissey' -> 'p2: Blissey'
+            if kind == "turn":
+                turn = int(ev[2])
+            elif kind in ("switch", "drag"):
+                stint[key] = set()
+            elif kind == "move" and len(ev) > 3:
+                move = norm(ev[3])
+                if move == "wish":
+                    self.wish[key[:2]] = turn
+                if move != "struggle" and not any(x.startswith("[from]") for x in ev[4:]):
+                    stint.setdefault(key, set()).add(move)
+                    if len(stint[key]) > 1:
+                        self.unlocked.add(key)
+            elif kind == "-start" and len(ev) > 3 and norm(ev[3]).endswith(("futuresight", "doomdesire")):
+                self.future[key[:2]] = (turn, key)
+            elif kind == "-status" and len(ev) > 3 and ev[3] == "slp":
+                (self.rest.add if ev[-1].endswith("move: Rest") else self.rest.discard)(key)
+            elif kind in ("-curestatus", "faint"):
+                self.rest.discard(key)
+
 
 def engine_move(move_id: str, hp_type: PokemonType | None = None) -> str:
     """poke-engine id: gen4 hidden power is a typed 70 BP move ('hiddenpowerfire70')."""
@@ -196,56 +307,77 @@ def calc_stats(species: str, level: int, physical: bool) -> dict[str, int]:
 
 def make_mon(species: str, level: int, types: tuple[str, str], hp: int, maxhp: int, stats: dict[str, int],
              ability: str, item: str, moves: list[tuple[str, int, bool]], status: str, sleep_turns: int,
-             weight: float) -> pe.Pokemon:
+             rest_turns: int, weight: float) -> pe.Pokemon:
     return pe.Pokemon(
         id=species, level=level, types=types, base_types=types, hp=hp, maxhp=maxhp,
         ability=ability or "none", base_ability=ability or "none", item=item or "none",
         attack=stats["atk"], defense=stats["def"], special_attack=stats["spa"],
         special_defense=stats["spd"], speed=stats["spe"], status=status, sleep_turns=sleep_turns,
-        weight_kg=float(weight), moves=[pe.Move(id=m, pp=max(pp, 0), disabled=d) for m, pp, d in moves],
+        rest_turns=rest_turns, weight_kg=float(weight),
+        moves=[pe.Move(id=m, pp=max(pp, 0), disabled=d) for m, pp, d in moves],
     )
 
 
-def status_of(mon: Pokemon) -> tuple[str, int]:
+def status_of(mon: Pokemon, rest: bool) -> tuple[str, int, int]:
+    """(status, sleep turns so far, rest turns left: Rest sleeps exactly 2 turns, the engine counts down from 3)."""
     status = STATUS.get(mon.status, "none") if mon.status is not None else "none"
-    return status, mon.status_counter if status == "sleep" else 0
+    if status != "sleep":
+        return status, 0, 0
+    return status, mon.status_counter, max(1, 3 - mon.status_counter) if rest else 0
 
 
-def own_mon(mon: Pokemon, disabled: set[str]) -> tuple[pe.Pokemon, list[str]]:
+def last_used(mon: Pokemon | None, moves: list[str]) -> int | None:
+    """Index in `moves` of the move `mon` used last since it switched in (poke-env resets it on switch-out)."""
+    last = next((m for m, mv in mon.moves.items() if mv.is_last_used), None) if mon else None
+    return next((i for i, m in enumerate(moves) if last and matches(last, m)), None)
+
+
+def own_mon(mon: Pokemon, disabled: set[str], rest: bool) -> tuple[pe.Pokemon, list[str]]:
     """Our mon exactly as the request describes it; also returns its engine move ids (action order)."""
-    moves = list(mon.moves.values())[:4]
-    ids = [norm(engine_move(m.id, m.type)) for m in moves]
-    status, sleep = status_of(mon)
+    moves = list(mon.moves.items())[:4]  # keys, not Move.id: they differ for hidden power
+    ids = [norm(engine_move(k, m.type)) for k, m in moves]
     hp = 0 if mon.fainted else mon.current_hp
     item = mon.item if mon.item and mon.item != GEN.UNKNOWN_ITEM else "none"
     stats = {k: mon.stats.get(k) or 100 for k in ("atk", "def", "spa", "spd", "spe")}
-    mv = [(i, m.current_pp, m.id in disabled) for i, m in zip(ids, moves)]
+    mv = [(i, m.current_pp, k in disabled) for i, (k, m) in zip(ids, moves)]
     return make_mon(mon.species, mon.level, engine_types(mon), hp, mon.max_hp or 1, stats, mon.ability or "none",
-                    item, mv, status, sleep, mon.weight), ids
+                    item, mv, *status_of(mon, rest), mon.weight), ids
 
 
-def opp_mon(mon: Pokemon | None, species: str, rng: random.Random) -> pe.Pokemon:
-    """Opponent mon (None = unrevealed, sampled from `species`) with hidden info determinized."""
+def opp_mon(mon: Pokemon | None, species: str, rng: random.Random, hist: History | None = None,
+            key: str = "") -> tuple[pe.Pokemon, list[str]]:
+    """Opponent mon (None = unrevealed, sampled from `species`) with hidden info determinized; also returns
+    its poke-env move ids. A known item is kept (None = it has none), a choice item is only guessed if the mon
+    never used two different moves in one stint, and an active choice holder is locked into its last move."""
     revealed = [m for m in (mon.moves if mon else {}) if norm(m) != "struggle"]
-    role, moves, ability = sample_set(species, revealed, mon.ability if mon else None, rng)
-    item = mon.item if mon and mon.item != GEN.UNKNOWN_ITEM else None
-    if item is None:
-        item = guess_item(species, role, moves, ability, rng)
+    unlocked = hist is not None and key in hist.unlocked
+    known_item = mon is not None and mon.item != GEN.UNKNOWN_ITEM
+    for _ in range(5):
+        role, moves, ability = sample_set(species, revealed, mon.ability if mon else None, rng)
+        item = (mon.item or "none") if known_item else guess_item(species, role, moves, ability, rng)
+        if known_item or not (unlocked and item.startswith("choice")):
+            break
+    else:
+        item = "leftovers"
     level = mon.level if mon else levels().get(species, 80)
     physical = any(move_data(m).get("category") == "Physical" for m in moves)
     stats = calc_stats(species, level, physical)
     pp = {m: mv.current_pp for m, mv in mon.moves.items()} if mon else {}
-    mv = [(norm(engine_move(m)), pp.get("hiddenpower" if m.startswith("hiddenpower") else m, 16), False) for m in moves]
-    status, sleep = status_of(mon) if mon else ("none", 0)
+    lock = last_used(mon, moves) if mon and mon.active and item.startswith("choice") else None
+    mv = [(norm(engine_move(m)), pp.get("hiddenpower" if m.startswith("hiddenpower") else m, 16),
+           lock is not None and i != lock) for i, m in enumerate(moves)]
+    status, sleep, rest = status_of(mon, key in hist.rest if hist else False) if mon else ("none", 0, 0)
     frac = 0.0 if mon and mon.fainted else mon.current_hp_fraction if mon else 1.0
     hp = 0 if frac <= 0 else max(1, round(frac * stats["hp"]))
     types = engine_types(mon) if mon else tuple((t.lower() for t in GEN.pokedex[species]["types"] + ["typeless"]))[:2]
     weight = mon.weight if mon else GEN.pokedex[species].get("weightkg", 50.0)
-    return make_mon(species, level, types, hp, stats["hp"], stats, ability, item or "none", mv, status, sleep, weight)
+    return make_mon(species, level, types, hp, stats["hp"], stats, ability, item, mv, status, sleep, rest,
+                    weight), moves
 
 
-def side_conditions(conds: dict[SideCondition, int], turn: int, toxic_count: int) -> pe.SideConditions:
-    kw: dict[str, int] = {"toxic_count": toxic_count}
+def side_conditions(conds: dict[SideCondition, int], turn: int, active: Pokemon | None) -> pe.SideConditions:
+    kw: dict[str, int] = {"toxic_count": active.status_counter if active and active.status is Status.TOX else 0,
+                          "protect": active.protect_counter if active else 0}  # consecutive protects
     kw["spikes"] = conds.get(SideCondition.SPIKES, 0)
     kw["toxic_spikes"] = conds.get(SideCondition.TOXIC_SPIKES, 0)
     kw["stealth_rock"] = int(SideCondition.STEALTH_ROCK in conds)
@@ -256,8 +388,9 @@ def side_conditions(conds: dict[SideCondition, int], turn: int, toxic_count: int
 
 
 def make_side(mons: list[pe.Pokemon], active: Pokemon | None, active_idx: int, conds: pe.SideConditions,
-              last_move: int | None, **kw: Any) -> pe.Side:
-    """`last_move`: index of the move the active mon is locked into, if known (encore needs it)."""
+              last_move: int | None, battle: Battle, hist: History, role: str, team: list[str],
+              **kw: Any) -> pe.Side:
+    """`last_move`: index of the active mon's last move this stint (None: it just switched in)."""
     mons = (mons + [pe.Pokemon.create_fainted() for _ in range(6)])[:6]
     boosts = active.boosts if active else {}
     effects = {e for e in (active.effects if active else {}) if e not in SKIP_EFFECTS}
@@ -267,13 +400,20 @@ def make_side(mons: list[pe.Pokemon], active: Pokemon | None, active_idx: int, c
     if active is not None and active.must_recharge:
         volatiles.add("MUSTRECHARGE")
     sub = mons[active_idx].maxhp // 4 if Effect.SUBSTITUTE in effects else 0
+    # Wish heals at the end of the turn after it was used, Future Sight hits at the end of the 2nd turn after
+    wish = 2 - (battle.turn - hist.wish[role]) if role in hist.wish else 0
+    fs_turn, fs_user = hist.future.get(role, (0, ""))
+    fs = 3 - (battle.turn - fs_turn) if fs_user in team else 0
     return pe.Side(
         pokemon=mons, active_index=str(active_idx), side_conditions=conds, volatile_statuses=volatiles,
+        volatile_status_durations=pe.VolatileStatusDurations(yawn=int("YAWN" in volatiles)),
+        wish=(wish, mons[active_idx].maxhp // 2) if wish > 0 else (0, 0),
+        future_sight=(fs, str(team.index(fs_user))) if fs > 0 else (0, "0"),
         substitute_health=sub, attack_boost=boosts.get("atk", 0), defense_boost=boosts.get("def", 0),
         special_attack_boost=boosts.get("spa", 0), special_defense_boost=boosts.get("spd", 0),
         speed_boost=boosts.get("spe", 0), accuracy_boost=boosts.get("accuracy", 0),
         evasion_boost=boosts.get("evasion", 0),
-        last_used_move="move:none" if last_move is None else f"move:{last_move}", **kw,
+        last_used_move=f"switch:{active_idx}" if last_move is None else f"move:{last_move}", **kw,
     )
 
 
@@ -300,35 +440,48 @@ class Converted:
         return 6 + self.move_ids.index(choice) if choice in self.move_ids else None
 
 
-def convert(battle: Battle, rng: random.Random, weather_seen: int | None = None) -> Converted:
+def convert(battle: Battle, rng: random.Random, weather_seen: int | None = None,
+            hist: History | None = None) -> Converted:
+    hist = hist or History(battle)
+    role, opp_role = battle.player_role or "p1", battle.opponent_role or "p2"
+    keys = list(battle.team)
     team = list(battle.team.values())
     active_idx = next((i for i, m in enumerate(team) if m.active), 0)
     disabled = set()
     if battle.active_pokemon is not None and not battle.force_switch:
-        avail = {m.id for m in battle.available_moves}
-        disabled = {m for m in battle.active_pokemon.moves if m not in avail}
+        avail = {id(m) for m in battle.available_moves}  # Move objects: ids and keys differ for hidden power
+        disabled = {k for k, m in battle.active_pokemon.moves.items() if id(m) not in avail}
     ours, move_ids = [], []
-    for i, mon in enumerate(team):
-        m, ids = own_mon(mon, disabled if i == active_idx else set())
+    for i, (key, mon) in enumerate(zip(keys, team)):
+        m, ids = own_mon(mon, disabled if i == active_idx else set(), key in hist.rest)
         ours.append(m)
         if i == active_idx:
             move_ids = ids
     active = team[active_idx]
-    tox = active.status_counter if active.status is Status.TOX else 0
-    avail = [m.id for m in battle.available_moves]
-    locked = list(active.moves).index(avail[0]) if len(avail) == 1 and avail[0] in list(active.moves)[:4] else None
-    side_one = make_side(ours, active, active_idx, side_conditions(battle.side_conditions, battle.turn, tox),
-                         locked, force_switch=bool(battle.force_switch), force_trapped=bool(battle.trapped))
+    own_moves = list(active.moves)[:4]
+    last = last_used(active, own_moves)
+    avail = [k for k, m in active.moves.items() if any(m is a for a in battle.available_moves)]
+    if last is None and len(avail) == 1 and avail[0] in own_moves:
+        last = own_moves.index(avail[0])  # locked (encore, choice, outrage) without poke-env knowing the move
+    side_one = make_side(ours, active, active_idx, side_conditions(battle.side_conditions, battle.turn, active),
+                         last, battle, hist, role, keys, force_switch=bool(battle.force_switch),
+                         force_trapped=bool(battle.trapped))
 
+    opp_keys = list(battle.opponent_team)
     opp = list(battle.opponent_team.values())
-    known = {m.species for m in opp}
-    pool = [s for s in role_sets() if s not in known and s in GEN.pokedex]
-    unrevealed = rng.sample(pool, max(0, min(6, battle.max_team_size or 6) - len(opp)))
-    theirs = [opp_mon(m, m.species, rng) for m in opp] + [opp_mon(None, s, rng) for s in unrevealed]
+    unrevealed = sample_species([m.species for m in opp], max(0, min(6, battle.max_team_size or 6) - len(opp)), rng)
+    theirs, opp_moves = [], []
+    for key, m in zip(opp_keys, opp):
+        mon, moves = opp_mon(m, m.species, rng, hist, key)
+        theirs.append(mon)
+        opp_moves.append(moves)
+    theirs += [opp_mon(None, s, rng)[0] for s in unrevealed]
     opp_active = battle.opponent_active_pokemon
     opp_idx = next((i for i, m in enumerate(opp) if m is opp_active), 0)
-    side_two = make_side(theirs, opp_active, opp_idx, side_conditions(battle.opponent_side_conditions, battle.turn, 0),
-                         None)
+    opp_last = last_used(opp_active, opp_moves[opp_idx]) if opp else None
+    side_two = make_side(theirs, opp_active, opp_idx,
+                         side_conditions(battle.opponent_side_conditions, battle.turn, opp_active),
+                         opp_last, battle, hist, opp_role, opp_keys)
 
     weather, turns = "none", 0
     for w in battle.weather:
@@ -355,8 +508,8 @@ def engine_pool(workers: int | None = None) -> EnginePool:
 class SearchPlayer(Player):
     """Network-guided determinized MCTS. prior_weight=0 and top_k=None is pure engine search."""
 
-    def __init__(self, policy: ActorCriticPolicy, *args: Any, ms: int = 300, samples: int = 4,
-                 prior_weight: float = 0.5, top_k: int | None = None, workers: int | None = None,
+    def __init__(self, policy: ActorCriticPolicy, *args: Any, ms: int = 1000, samples: int = 4,
+                 prior_weight: float = 0.25, top_k: int | None = None, workers: int | None = None,
                  seed: int | None = None, **kwargs: Any):
         super().__init__(*args, **kwargs)
         self.policy, self.ms, self.samples = policy, ms, samples
@@ -389,7 +542,8 @@ class SearchPlayer(Player):
     async def visit_shares(self, battle: Battle) -> np.ndarray:
         """Mean (over determinizations) MCTS visit share of every poke-env action index."""
         first_seen = self._weather_first_seen(battle)
-        convs = [convert(battle, self.rng, first_seen) for _ in range(self.samples)]
+        hist = History(battle)
+        convs = [convert(battle, self.rng, first_seen, hist) for _ in range(self.samples)]
         results = await asyncio.gather(*(self.pool.search(c.state_str, self.ms) for c in convs),
                                        return_exceptions=True)
         shares, ok, errors = np.zeros(10), 0, []
@@ -410,6 +564,8 @@ class SearchPlayer(Player):
             raise options
         shares, total = np.zeros(10), sum(v for _, v, _ in options) or 1
         for choice, visits, _ in options:
+            if choice == "No Move":  # the engine thinks we cannot act (truant, recharge): no information
+                continue
             a = conv.action(choice)
             if a is None:
                 raise ValueError(f"unmappable engine choice {choice!r} ({conv.switch_ids}, {conv.move_ids})")
@@ -434,6 +590,8 @@ class SearchPlayer(Player):
         if mask.sum() > 1:
             try:
                 shares = await self.visit_shares(battle)
+                if not shares.any():
+                    return SinglesEnv.action_to_order(np.int64(action), battle, strict=False)
                 if shares[mask > 0].sum() < 0.5:  # the engine searched mostly illegal options -> desync
                     raise ValueError(f"engine options disagree with the request: {shares} vs mask {mask}")
                 action = self.combine(shares, probs, mask)
@@ -450,24 +608,35 @@ class SearchPlayer(Player):
 
 # ---------------------------------------------------------------- CLI
 
+def config(args: argparse.Namespace, prefix: str = "") -> dict[str, Any]:
+    return {k: getattr(args, prefix + k) for k in ("ms", "samples", "prior_weight", "top_k")}
+
+
 async def run(args: argparse.Namespace) -> None:
     policy = PPO.load(args.model, device="cpu").policy.eval()
     tag = random.randint(0, 10**6)
     common = dict(battle_format=args.format, server_configuration=local_server(args.port),
                   max_concurrent_battles=args.concurrency, log_level=40)
-    player = SearchPlayer(policy, ms=args.ms, samples=args.samples, prior_weight=args.prior_weight,
-                          top_k=args.top_k, workers=args.workers,
+    cfg = config(args)
+    player = SearchPlayer(policy, **cfg, workers=args.workers,
                           account_configuration=AccountConfiguration(f"search{tag}", None), **common)
-    opp_conf = AccountConfiguration(f"{args.opponent[:8]}{tag}", None)
-    opponent = (PolicyPlayer(policy, account_configuration=opp_conf, **common) if args.opponent == "policy"
-                else BASELINES[args.opponent](account_configuration=opp_conf, **common))
+    opp_conf = AccountConfiguration(f"opp{args.opponent[:8]}{tag}", None)
+    if args.opponent == "search":
+        opp_cfg = config(args, "opp_")
+        opponent = SearchPlayer(policy, **opp_cfg, workers=args.workers, account_configuration=opp_conf, **common)
+        desc = f"SearchPlayer({', '.join(f'{k}={v}' for k, v in opp_cfg.items())})"
+    else:
+        opponent = (PolicyPlayer(policy, account_configuration=opp_conf, **common) if args.opponent == "policy"
+                    else BASELINES[args.opponent](account_configuration=opp_conf, **common))
+        desc = args.opponent
     start = time.time()
-    await player.battle_against(opponent, n_battles=args.n_battles)
+    half = args.n_battles // 2  # alternate who challenges (p1 / p2)
+    await player.battle_against(opponent, n_battles=args.n_battles - half)
+    await opponent.battle_against(player, n_battles=half)
     n, won = player.n_finished_battles, player.n_won_battles
     s = player.stats
-    print(f"SearchPlayer(ms={args.ms}, samples={args.samples}, prior_weight={args.prior_weight}, top_k={args.top_k})"
-          f" vs {args.opponent}: won {won}/{n} = {won / max(n, 1):.1%}  "
-          f"(±{1.96 * np.sqrt(max(won, 1) * max(n - won, 1) / max(n, 1) ** 3):.1%})")
+    print(f"SearchPlayer({', '.join(f'{k}={v}' for k, v in cfg.items())}) vs {desc}: won {won}/{n} = "
+          f"{won / max(n, 1):.1%}  (±{1.96 * np.sqrt(max(won, 1) * max(n - won, 1) / max(n, 1) ** 3):.1%})")
     print(f"decisions {s['decisions']}, searched {s['searched']}, fallbacks {s['fallbacks']}, "
           f"failed samples {s['failed_samples']}, "
           f"same as network argmax {s['agree'] / max(s['searched'], 1):.1%}, {time.time() - start:.0f}s")
@@ -476,12 +645,15 @@ async def run(args: argparse.Namespace) -> None:
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("model")
-    p.add_argument("--opponent", default="policy", choices=["policy", *BASELINES])
+    p.add_argument("--opponent", default="policy", choices=["policy", "search", *BASELINES])
     p.add_argument("--n-battles", type=int, default=50)
-    p.add_argument("--ms", type=int, default=300, help="MCTS time per determinization per decision")
+    p.add_argument("--ms", type=int, default=1000, help="MCTS time per determinization per decision")
     p.add_argument("--samples", type=int, default=4, help="determinizations per decision")
-    p.add_argument("--prior-weight", type=float, default=0.5, help="0 = pure engine search")
+    p.add_argument("--prior-weight", type=float, default=0.25, help="0 = pure engine search")
     p.add_argument("--top-k", type=int, default=None, help="only consider the network's top-k actions")
+    for k in ("ms", "samples", "prior-weight", "top-k"):  # the --opponent search configuration
+        p.add_argument(f"--opp-{k}", type=float if k == "prior-weight" else int,
+                       default=p.get_default(k.replace("-", "_")))
     p.add_argument("--concurrency", type=int, default=3, help="simultaneous battles")
     p.add_argument("--workers", type=int, default=None, help="engine processes (default: cores - 1)")
     p.add_argument("--format", default="gen4randombattle")
