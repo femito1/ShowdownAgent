@@ -49,13 +49,13 @@ from poke_env.battle import AbstractBattle, Battle, Effect, Field, Pokemon, Poke
 from poke_env.data import GenData
 from poke_env.environment import SinglesEnv
 from poke_env.player import BattleOrder, DefaultBattleOrder, Player
-from stable_baselines3 import PPO
 from stable_baselines3.common.policies import ActorCriticPolicy
 
 from porygon.encoder import embed_battle
 from porygon.engine_worker import EnginePool
 from porygon.env import PolicyPlayer, local_server
 from porygon.evaluate import BASELINES
+from porygon.model import load_policy
 
 log = logging.getLogger("porygon.search")
 GEN = GenData.from_gen(4)
@@ -613,7 +613,7 @@ def config(args: argparse.Namespace, prefix: str = "") -> dict[str, Any]:
 
 
 async def run(args: argparse.Namespace) -> None:
-    policy = PPO.load(args.model, device="cpu").policy.eval()
+    policy = load_policy(args.model)
     tag = random.randint(0, 10**6)
     common = dict(battle_format=args.format, server_configuration=local_server(args.port),
                   max_concurrent_battles=args.concurrency, log_level=40)

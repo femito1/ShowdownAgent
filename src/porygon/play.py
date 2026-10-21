@@ -10,9 +10,9 @@ import asyncio
 import os
 
 from poke_env import AccountConfiguration, LocalhostServerConfiguration, ShowdownServerConfiguration
-from stable_baselines3 import PPO
 
 from porygon.env import PolicyPlayer
+from porygon.model import load_policy
 
 
 class LoggingPlayer(PolicyPlayer):
@@ -32,7 +32,7 @@ class LoggingPlayer(PolicyPlayer):
 
 
 async def run(args: argparse.Namespace) -> None:
-    policy = PPO.load(args.model, device="cpu").policy.eval()
+    policy = load_policy(args.model)
     player = LoggingPlayer(
         policy,
         account_configuration=AccountConfiguration(args.username, args.password or os.environ.get("PS_PASSWORD")),

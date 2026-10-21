@@ -6,6 +6,7 @@
 # Settings go in slurm.env next to the repo (sbatch --export=... gets jobs held with
 # user_env_retrieval_failed on this cluster):
 #   SHA=<showdown commit> RESUME=<zip> POOL=<pool dir> TOTAL=<total steps> CHAIN=<follow-up jobs>
+#   ANCHOR=<zip or .pt evaluated against every eval; default RESUME>
 #   sbatch scripts/slurm_train.sbatch [extra porygon.train args]
 # Each job resumes from the newest checkpoint under runs/ (so a requeue after a node failure, or
 # the next job in a chain, continues where the last one stopped) and, while CHAIN > 0, submits
@@ -54,11 +55,12 @@ RUN=runs/$(date +%Y%m%d-%H%M%S)-$SLURM_JOB_ID; mkdir -p "$RUN"
 echo "resuming from ${LATEST:-scratch}"
 SYNC_REMOTE=${SYNC_REMOTE:-git@github.com:femito1/porygon-runs.git}
 export SYNC_KEY=${SYNC_KEY:-$HOME/.ssh/porygon_runs_deploy} POOL_DIR=${POOL:-$RUN/pool}
+ANCHOR=${ANCHOR:-${RESUME:-}}
 scripts/sync_results.sh "$RUN" "$SYNC_REMOTE" >> "$RUN/sync.log" 2>&1 &
 
 .venv/bin/python -m porygon.train --ports "$BASE-$((BASE + N_SERVERS - 1))" --n-battles "$SELFPLAY" \
   --pool-battles "$POOL_BATTLES" --pool-dir "$POOL_DIR" --run-dir "$RUN" \
-  ${LATEST:+--resume "$LATEST"} --total-steps "${TOTAL:-400000000}" --max-hours 70.5 --checkpoint-every 5000000 \
+  ${LATEST:+--resume "$LATEST"} ${ANCHOR:+--anchor "$ANCHOR"} --total-steps "${TOTAL:-400000000}" --max-hours 70.5 --checkpoint-every 5000000 \
   "$@" 2>&1 | tee "$RUN/train.log" || true
 scripts/sync_results.sh "$RUN" "$SYNC_REMOTE" once >> "$RUN/sync.log" 2>&1
 

@@ -16,7 +16,7 @@ from stable_baselines3.common.vec_env import VecMonitor
 
 from porygon.env import ConcatVecEnv, make_selfplay_vec_env
 from porygon.evaluate import Evaluator
-from porygon.model import MaskedPolicy
+from porygon.model import MaskedPolicy, load_policy
 from porygon.pool import make_pool_vec_env, save_snapshot
 
 
@@ -58,13 +58,14 @@ class SnapshotCallback(BaseCallback):
 
 
 class EvalCallback(BaseCallback):
-    """Every `every` steps: win rate vs baselines -> tensorboard; keep the best checkpoint."""
+    """Every `every` steps: win rate vs baselines (and the anchor checkpoint, if given) ->
+    tensorboard; keep the best checkpoint, judged by the anchor score when there is one."""
 
     def __init__(self, battle_format: str, port: int, every: int, n_battles: int,
-                 opponents: tuple[str, ...], save_dir: Path):
+                 opponents: tuple[str, ...], save_dir: Path, anchor: Path | None = None):
         super().__init__()
         self.battle_format, self.port, self.every, self.n_battles = battle_format, port, every, n_battles
-        self.opponent_names, self.save_dir = opponents, save_dir
+        self.opponent_names, self.save_dir, self.anchor = opponents, save_dir, anchor
         self.next_eval, self.best = every, -1.0
         self.evaluator: Evaluator | None = None
 
@@ -79,15 +80,16 @@ class EvalCallback(BaseCallback):
             return
         self.next_eval += self.every
         if self.evaluator is None:
+            anchor = load_policy(self.anchor, str(self.model.device)) if self.anchor else None
             self.evaluator = Evaluator(self.model.policy, self.battle_format, self.port,
-                                       self.opponent_names)
+                                       self.opponent_names, anchor=anchor)
         self.model.policy.set_training_mode(False)
         start = time.time()
         results = self.evaluator.run(self.n_battles)
         for name, rate in results.items():
             self.logger.record(f"eval/win_rate_{name}", rate)
         self.logger.record("eval/seconds", time.time() - start)
-        score = results[self.opponent_names[0]]
+        score = results["anchor" if self.anchor else self.opponent_names[0]]
         print(f"[eval @ {self.num_timesteps:,}] " + "  ".join(f"{k}={v:.1%}" for k, v in results.items()))
         if score > self.best:
             self.best = score
@@ -134,6 +136,8 @@ def main():
                    default=(0.05, 0.05, 0.0))
     p.add_argument("--eval-every", type=int, default=2_500_000)
     p.add_argument("--eval-battles", type=int, default=200)
+    # The baseline bots saturate around 85%; a fixed earlier checkpoint keeps showing progress.
+    p.add_argument("--anchor", type=Path, help="checkpoint (.zip or pool .pt) to also evaluate against")
     p.add_argument("--checkpoint-every", type=int, default=5_000_000)
     p.add_argument("--run-dir", type=Path, default=Path("runs") / time.strftime("%Y%m%d-%H%M%S"))
     p.add_argument("--resume", type=Path, help="checkpoint .zip to continue from")
@@ -189,7 +193,7 @@ def main():
         CheckpointCallback(max(1, args.checkpoint_every // env.num_envs), str(args.run_dir / "checkpoints"),
                            name_prefix="ppo"),
         EvalCallback(args.format, ports[0], args.eval_every, args.eval_battles, ("heuristic", "max_power"),
-                     args.run_dir),
+                     args.run_dir, args.anchor),
     ] + ([WallClockLimit(args.max_hours)] if args.max_hours else [])
       + ([SnapshotCallback(pool_dir, args.snapshot_every)] if args.pool_battles else []))
     try:

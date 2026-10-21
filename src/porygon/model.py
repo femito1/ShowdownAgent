@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import torch
 from gymnasium import spaces
 from stable_baselines3.common.policies import ActorCriticPolicy
@@ -129,3 +131,11 @@ class MaskedPolicy(ActorCriticPolicy):
         logits = self.action_net(latent_pi)
         logits = logits.masked_fill(self._mask == 0, torch.finfo(logits.dtype).min)
         return self.action_dist.proba_distribution(action_logits=logits)
+
+
+def load_policy(path: str | Path, device: str = "cpu") -> MaskedPolicy:
+    """Eval-mode policy from a PPO checkpoint (.zip) or an opponent-pool snapshot (.pt)."""
+    if Path(path).suffix == ".pt":
+        return MaskedPolicy.load(str(path), device=device).eval()
+    from stable_baselines3 import PPO
+    return PPO.load(path, device=device).policy.eval()

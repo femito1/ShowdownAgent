@@ -33,9 +33,9 @@ import time
 import numpy as np
 from poke_env import AccountConfiguration
 from poke_env.concurrency import handle_threaded_coroutines
-from stable_baselines3 import PPO
 
 from porygon.env import PolicyPlayer, local_server
+from porygon.model import load_policy
 from porygon.search import SearchPlayer
 
 log = logging.getLogger("vs_foulplay")
@@ -130,7 +130,7 @@ async def main():
     a = p.parse_args()
     logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(name)s %(message)s")
 
-    policy = PPO.load(a.model, device="cpu").policy.eval()
+    policy = load_policy(a.model)
     tag = random.randint(0, 10**5)
     common = dict(battle_format=a.format, server_configuration=local_server(a.port),
                   max_concurrent_battles=1, log_level=40)

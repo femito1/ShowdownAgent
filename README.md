@@ -20,7 +20,8 @@ sets (from Showdown's random-battle data), and poke-env's slot-based 10-action s
 ## Results (gen4randombattle)
 - **Raw network** (PPO, 60M steps): 83.5% vs `SimpleHeuristicsPlayer`, 95% vs `MaxBasePowerPlayer`
   (200 battles each) — on par with the thesis (~80% at 40M, ~85% at 150M steps). Continued
-  training with the opponent pool holds ~84–86% vs the heuristic bot past 90M steps.
+  training with the opponent pool holds ~84–86% vs the heuristic bot past 90M steps, but still
+  improves head-to-head: 121M beats 101M 56.5% and 60M 60% (200 battles each).
 - **Checkpoint tournament** (`porygon.tournament`, 100 battles per pairing, Bradley-Terry Elo):
   60M 1711 > 46M 1663 > 31M 1635 > 10M 1493 > heuristic 1457 > 2.5M 1346 > max_power 1194.
   Every checkpoint beats every earlier one; gains slow after ~30M steps.
@@ -45,7 +46,7 @@ sets (from Showdown's random-battle data), and poke-env's slot-based 10-action s
 | `src/porygon/play.py` | play on the official server (ladder / challenges) |
 | `src/gloria/` | alias of `porygon` (the old name) so checkpoints saved before the rename load |
 | `scripts/slurm_train.sbatch` | training job for the Imperial DoC Slurm cluster |
-| `scripts/sync_results.sh`, `fetch_results.sh` | push a run's results to a git repo / download them |
+| `scripts/sync_results.sh`, `fetch_results.sh` | push a run's results to a git repo / download and archive them |
 | `scripts/pod_*.sh`, `pod_retry_deploy.py` | the same on RunPod |
 | `scripts/vs_foulplay.py`, `ladder_watchdog.sh` | benchmark vs Foul Play; long ladder sessions |
 
@@ -67,19 +68,25 @@ python -m porygon.train --n-battles 60 --pool-battles 30 --ports 8100-8109 \
   --resume runs/<run>/final_model.zip --total-steps 400_000_000
 ```
 `--pool-battles` adds battles against frozen snapshots (one added every `--snapshot-every` steps)
-and baseline bots; seed a pool with `python -m porygon.pool CKPTS... --out DIR`.
+and baseline bots; seed a pool with `python -m porygon.pool CKPTS... --out DIR`. `--anchor CKPT`
+also evaluates against a fixed earlier checkpoint and picks `best_model` by that score: the
+baseline bots saturate around 85%, while head-to-head win rates keep showing progress.
 
 On the Imperial DoC cluster, from the repo copy on `/vol/bitbucket`: put `SHA=<showdown commit>`,
-`RESUME=<zip>`, `POOL=<pool dir>`, `TOTAL=<steps>`, `CHAIN=<follow-up jobs>` in `slurm.env`
+`RESUME=<zip>`, `POOL=<pool dir>`, `TOTAL=<steps>`, `CHAIN=<follow-up jobs>`, optionally
+`ANCHOR=<zip or .pt>` (default `RESUME`) in `slurm.env`
 (never `sbatch --export`, which gets jobs held), then `sbatch scripts/slurm_train.sbatch`. The job
 sets itself up, resumes from the newest checkpoint, uses all cores it gets (30 on a 32-core
 request), stops after 70.5 h, and pushes results every 20 min. Fetch them anywhere with
-`scripts/fetch_results.sh` (into `runs/remote/`).
+`scripts/fetch_results.sh` (into `runs/remote/`). The push holds only the newest checkpoint and
+pool snapshots, so the fetch also copies them into `runs/archive/` (never overwritten); the full
+history stays on the cluster (`runs/<run>/checkpoints/` every 5M steps, `$POOL/*.pt` every 2.5M)
+for `rsync`.
 
 ## Evaluate / play
 ```bash
-python -m porygon.evaluate MODEL --port 8000 --n-battles 500
-python -m porygon.tournament MODEL_A MODEL_B ... --n-battles 100
+python -m porygon.evaluate MODEL --port 8000 --n-battles 500 [--anchor OLD_MODEL]
+python -m porygon.tournament MODEL_A MODEL_B ... --n-battles 100   # .zip checkpoints or pool .pt
 python -m porygon.search MODEL --opponent {policy,heuristic,max_power,search} --n-battles 100
 python scripts/vs_foulplay.py MODEL --player search --opponents fpa0 fpa1 ...   # setup in its docstring
 PS_PASSWORD=... scripts/ladder_watchdog.sh USER MODEL TOTAL_GAMES 2              # from a home connection
