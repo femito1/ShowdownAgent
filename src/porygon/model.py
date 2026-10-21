@@ -4,7 +4,7 @@ from stable_baselines3.common.policies import ActorCriticPolicy
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from torch import nn
 
-from gloria.encoder import (
+from porygon.encoder import (
     ACTIVE_FLAG, FIELD_DIM, MON_DIM, MON_NUM_DIM, MOVE_DIM, MOVEPOOL, N_CAT, N_MOVES, N_TOKENS,
     VOCAB_SIZES,
 )

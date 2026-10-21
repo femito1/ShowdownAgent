@@ -18,4 +18,4 @@ cd "$ROOT"
 .venv/bin/pip install -q --upgrade pip
 .venv/bin/pip install -q torch --index-url https://download.pytorch.org/whl/cu126
 .venv/bin/pip install -q -e .
-.venv/bin/python -c "import torch, gloria.encoder; print('cuda:', torch.cuda.is_available(), torch.__version__)"
+.venv/bin/python -c "import torch, porygon.encoder; print('cuda:', torch.cuda.is_available(), torch.__version__)"

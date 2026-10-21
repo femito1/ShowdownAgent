@@ -7,9 +7,9 @@ import pytest
 import torch
 from gymnasium import spaces
 
-from gloria.encoder import OBS_DIM
-from gloria.env import SelfPlayEnv, local_server
-from gloria.model import BattleTransformer
+from porygon.encoder import OBS_DIM
+from porygon.env import SelfPlayEnv, local_server
+from porygon.model import BattleTransformer
 
 
 @pytest.mark.parametrize("battle_format", ["gen4randombattle", "gen9randombattle"])

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Start Showdown servers and a detached training run in tmux session "train".
-remove] [SYNC_REMOTE=.. SYNC_KEY=..] scripts/pod_train.sh|remove] [SYNC_REMOTE=.. SYNC_KEY=..] scripts/pod_train.sh N_SERVERS N_BATTLES [extra gloria.train args...]
+remove] [SYNC_REMOTE=.. SYNC_KEY=..] scripts/pod_train.sh|remove] [SYNC_REMOTE=.. SYNC_KEY=..] scripts/pod_train.sh N_SERVERS N_BATTLES [extra porygon.train args...]
 # Watch: tmux attach -t train   |   tensorboard --logdir runs --bind_all
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -9,7 +9,7 @@ BASE=8100  # RunPod images run nginx on 8001/8081/9091
 "$ROOT/scripts/start_servers.sh" "$N_SERVERS" $BASE
 RUN="runs/$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$ROOT/$RUN"
-CMD="${PYTHON:-python} -m gloria.train --ports $BASE-$((BASE + N_SERVERS - 1)) --n-battles $N_BATTLES --run-dir $RUN $* 2>&1 | tee $RUN/train.log"
+CMD="${PYTHON:-python} -m porygon.train --ports $BASE-$((BASE + N_SERVERS - 1)) --n-battles $N_BATTLES --run-dir $RUN $* 2>&1 | tee $RUN/train.log"
 # SYNC_REMOTE=git@github.com:USER/REPO.git SYNC_KEY=deploy_key: push results there every 20 min and
 # once more when training ends (scripts/sync_results.sh), so they never depend on this pod.
 if [ -n "${SYNC_REMOTE:-}" ]; then

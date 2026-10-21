@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const {Dex, toID} = require('../pokemon-showdown/dist/sim');
 
-const OUT = path.join(__dirname, '..', 'src', 'gloria', 'data');
+const OUT = path.join(__dirname, '..', 'src', 'porygon', 'data');
 const ids = table => [...new Set(table.all().map(e => e.id))].sort();
 
 fs.writeFileSync(path.join(OUT, 'vocab.json'), JSON.stringify({

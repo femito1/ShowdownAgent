@@ -2,7 +2,7 @@
 Reinforcement Learning" (MIT MEng thesis, 2024), Table 3.1.
 
     scripts/start_servers.sh 8          # Showdown servers on ports 8000-8007
-    python -m gloria.train --n-battles 48 --ports 8000-8007 --total-steps 150_000_000
+    python -m porygon.train --n-battles 48 --ports 8000-8007 --total-steps 150_000_000
 """
 
 import argparse
@@ -14,10 +14,10 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList, CheckpointCallback
 from stable_baselines3.common.vec_env import VecMonitor
 
-from gloria.env import ConcatVecEnv, make_selfplay_vec_env
-from gloria.evaluate import Evaluator
-from gloria.model import MaskedPolicy
-from gloria.pool import make_pool_vec_env, save_snapshot
+from porygon.env import ConcatVecEnv, make_selfplay_vec_env
+from porygon.evaluate import Evaluator
+from porygon.model import MaskedPolicy
+from porygon.pool import make_pool_vec_env, save_snapshot
 
 
 def thesis_lr(progress_remaining: float) -> float:

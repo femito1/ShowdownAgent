@@ -14,7 +14,7 @@ while true; do
   n=$(played) || { sleep 60; continue; }
   [ "$n" -ge "$TOTAL" ] && { echo "$(date -u +%T) watchdog: $n games played, done" >> $LOG; exit 0; }
   echo "$(date -u +%T) watchdog: $n/$TOTAL games, starting player for $((TOTAL - n))" >> $LOG
-  ${PYTHON:-.venv/bin/python} -m gloria.play "$MODEL" --username "$USER" --ladder $((TOTAL - n)) --concurrency "$CONC" >> $LOG 2>&1 &
+  ${PYTHON:-.venv/bin/python} -m porygon.play "$MODEL" --username "$USER" --ladder $((TOTAL - n)) --concurrency "$CONC" >> $LOG 2>&1 &
   pid=$!
   while kill -0 $pid 2>/dev/null; do
     sleep 30

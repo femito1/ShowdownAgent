@@ -6,11 +6,11 @@
 # Settings go in slurm.env next to the repo (sbatch --export=... gets jobs held with
 # user_env_retrieval_failed on this cluster):
 #   SHA=<showdown commit> RESUME=<zip> POOL=<pool dir> TOTAL=<total steps> CHAIN=<follow-up jobs>
-#   sbatch scripts/slurm_train.sbatch [extra gloria.train args]
+#   sbatch scripts/slurm_train.sbatch [extra porygon.train args]
 # Each job resumes from the newest checkpoint under runs/ (so a requeue after a node failure, or
 # the next job in a chain, continues where the last one stopped) and, while CHAIN > 0, submits
 # its own continuation when it finishes.
-#SBATCH --job-name=gloria
+#SBATCH --job-name=porygon
 #SBATCH --partition=a30
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=32
@@ -52,11 +52,11 @@ trap 'pkill -u "$USER" -f "pokemon-showdown start --skip-build --no-security" ||
 LATEST=$(ls -t runs/2*/checkpoints/*.zip runs/2*/final_model.zip "${RESUME:-/nonexistent}" 2>/dev/null | head -1 || true)
 RUN=runs/$(date +%Y%m%d-%H%M%S)-$SLURM_JOB_ID; mkdir -p "$RUN"
 echo "resuming from ${LATEST:-scratch}"
-SYNC_REMOTE=${SYNC_REMOTE:-git@github.com:femito1/gloria-runs.git}
-export SYNC_KEY=${SYNC_KEY:-$HOME/.ssh/gloria_runs_deploy} POOL_DIR=${POOL:-$RUN/pool}
+SYNC_REMOTE=${SYNC_REMOTE:-git@github.com:femito1/porygon-runs.git}
+export SYNC_KEY=${SYNC_KEY:-$HOME/.ssh/porygon_runs_deploy} POOL_DIR=${POOL:-$RUN/pool}
 scripts/sync_results.sh "$RUN" "$SYNC_REMOTE" >> "$RUN/sync.log" 2>&1 &
 
-.venv/bin/python -m gloria.train --ports "$BASE-$((BASE + N_SERVERS - 1))" --n-battles "$SELFPLAY" \
+.venv/bin/python -m porygon.train --ports "$BASE-$((BASE + N_SERVERS - 1))" --n-battles "$SELFPLAY" \
   --pool-battles "$POOL_BATTLES" --pool-dir "$POOL_DIR" --run-dir "$RUN" \
   ${LATEST:+--resume "$LATEST"} --total-steps "${TOTAL:-400000000}" --max-hours 70.5 --checkpoint-every 5000000 \
   "$@" 2>&1 | tee "$RUN/train.log" || true

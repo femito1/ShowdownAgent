@@ -14,4 +14,4 @@ cd "$ROOT/pokemon-showdown"
 npm install --no-audit --no-fund --silent && node build
 cd "$ROOT"
 PIP_BREAK_SYSTEM_PACKAGES=1 pip install -q -e .   # container-only; keeps the image's CUDA torch (pyproject only needs torch>=2.4)
-python -c "import torch, gloria.encoder; print('cuda:', torch.cuda.is_available(), torch.__version__)"
+python -c "import torch, porygon.encoder; print('cuda:', torch.cuda.is_available(), torch.__version__)"

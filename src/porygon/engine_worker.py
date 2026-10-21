@@ -1,7 +1,7 @@
-"""poke-engine search worker processes (used by `gloria.search`).
+"""poke-engine search worker processes (used by `porygon.search`).
 
 poke-engine holds the GIL while it searches, so parallel searches need processes. Workers are
-plain subprocesses (`python -m gloria.engine_worker`) speaking one JSON object per line, so they
+plain subprocesses (`python -m porygon.engine_worker`) speaking one JSON object per line, so they
 import only poke-engine (no torch / poke-env) and never re-run the caller's __main__.
 """
 
@@ -30,16 +30,20 @@ def main() -> None:
 
 
 class EnginePool:
-    """`n` worker subprocesses on the running event loop; `search` awaits a free one."""
+    """`n` worker subprocesses on the running event loop; `search` awaits a free one.
 
-    def __init__(self, n: int):
-        self.n = n
+    A search that runs `grace` seconds past its budget is killed and its worker replaced:
+    poke-engine can loop forever on some states (seen on a forced switch after our own U-turn),
+    which would otherwise stall the player until the battle timer forfeits it."""
+
+    def __init__(self, n: int, grace: float = 30.0):
+        self.n, self.grace = n, grace
         self.idle: asyncio.Queue | None = None
 
     @staticmethod
     async def _spawn() -> asyncio.subprocess.Process:
         return await asyncio.create_subprocess_exec(
-            sys.executable, "-m", "gloria.engine_worker",
+            sys.executable, "-m", "porygon.engine_worker",
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, limit=2**24,
         )
 
@@ -52,9 +56,9 @@ class EnginePool:
         try:
             proc.stdin.write((json.dumps({"state": state_str, "ms": ms}) + "\n").encode())
             await proc.stdin.drain()
-            line = await proc.stdout.readline()
+            line = await asyncio.wait_for(proc.stdout.readline(), ms / 1000 + self.grace)
         finally:
-            if not line:  # crashed (e.g. a Rust abort): replace it
+            if not line:  # crashed (e.g. a Rust abort) or timed out: replace it
                 if proc.returncode is None:
                     proc.kill()
                 proc = await self._spawn()

@@ -2,7 +2,7 @@
 
 Tells whether self-play keeps improving or just cycles (newer checkpoints should beat older ones).
 
-    python -m gloria.tournament runs/a/ppo_10M.zip runs/b/best_model.zip --baselines heuristic max_power
+    python -m porygon.tournament runs/a/ppo_10M.zip runs/b/best_model.zip --baselines heuristic max_power
 """
 
 import argparse
@@ -14,8 +14,8 @@ import numpy as np
 from poke_env import AccountConfiguration
 from stable_baselines3 import PPO
 
-from gloria.env import PolicyPlayer, local_server
-from gloria.evaluate import BASELINES
+from porygon.env import PolicyPlayer, local_server
+from porygon.evaluate import BASELINES
 
 
 def fit_elo(names: list[str], wins: np.ndarray, games: np.ndarray, iters: int = 2000) -> np.ndarray:
@@ -40,7 +40,7 @@ async def run(args: argparse.Namespace) -> None:
     for i, path in enumerate(map(Path, args.models)):
         policy = PPO.load(path, device=args.device).policy.eval()
         players[label(path)] = PolicyPlayer(
-            policy, account_configuration=AccountConfiguration(f"gloria{i}x{np.random.randint(1e6)}", None), **common)
+            policy, account_configuration=AccountConfiguration(f"porygon{i}x{np.random.randint(1e6)}", None), **common)
     for name in args.baselines:
         players[name] = BASELINES[name](**common)
 

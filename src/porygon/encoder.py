@@ -1,6 +1,6 @@
 """Battle -> flat float32 vector.
 
-Layout (token-major, consumed by `gloria.model.BattleTransformer`):
+Layout (token-major, consumed by `porygon.model.BattleTransformer`):
     [field token | 6 own mons (battle.team order = switch action slots) | 6 opponent mons]
 Each mon token is [categorical ids | movepool ids | mon numerics | 4 x move numerics].
 Categorical ids are stored as floats and embedded by the model; 0 = none/padding, 1 = unknown.

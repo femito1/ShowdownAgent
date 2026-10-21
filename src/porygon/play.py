@@ -1,8 +1,8 @@
 """Play a trained model on the official Pokémon Showdown server (needs a registered account).
 
-    python -m gloria.play runs/<run>/best_model.zip --username NAME --password PASS --ladder 50
-    python -m gloria.play runs/<run>/best_model.zip --username NAME --password PASS --accept 5
-    python -m gloria.play runs/<run>/best_model.zip --local --challenge YourName   # local server
+    python -m porygon.play runs/<run>/best_model.zip --username NAME --password PASS --ladder 50
+    python -m porygon.play runs/<run>/best_model.zip --username NAME --password PASS --accept 5
+    python -m porygon.play runs/<run>/best_model.zip --local --challenge YourName   # local server
 """
 
 import argparse
@@ -12,15 +12,15 @@ import os
 from poke_env import AccountConfiguration, LocalhostServerConfiguration, ShowdownServerConfiguration
 from stable_baselines3 import PPO
 
-from gloria.env import PolicyPlayer
+from porygon.env import PolicyPlayer
 
 
 class LoggingPlayer(PolicyPlayer):
     """Prints every finished battle with the running record and ratings."""
 
     def choose_move(self, battle):
-        if battle.turn <= 1 and not getattr(battle, "_gloria_announced", False):
-            battle._gloria_announced = True
+        if battle.turn <= 1 and not getattr(battle, "_porygon_announced", False):
+            battle._porygon_announced = True
             print(f"started vs {battle.opponent_username}  {battle.battle_tag}", flush=True)
         return super().choose_move(battle)
 

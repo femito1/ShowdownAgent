@@ -1,5 +1,5 @@
 [project]
-name = "gloria"
+name = "porygon"
 version = "0.2.0"
 description = "A Pokémon Showdown agent trained with self-play reinforcement learning"
 readme = "README.md"
@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# gloria.search; must be built for gen4, see the gloria.search docstring
+# porygon.search; must be built for gen4, see the porygon.search docstring
 search = ["poke-engine>=0.0.48"]
 
 [build-system]
@@ -25,4 +25,4 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-gloria = ["data/*.json"]
+porygon = ["data/*.json"]

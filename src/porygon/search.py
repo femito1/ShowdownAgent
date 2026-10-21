@@ -6,7 +6,7 @@ Each decision we
      consistent with what has been revealed, and stats follow the random-battle rules
      (level from the data, 85 EVs, 31 IVs, neutral nature);
   2. run poke-engine's simultaneous-move MCTS on every sample for `ms` milliseconds (in parallel
-     worker processes, `gloria.engine_worker`);
+     worker processes, `porygon.engine_worker`);
   3. score each legal action as  mean visit share over samples + prior_weight * network prob,
      optionally only among the network's top-k actions, and play the argmax.
 Any failure (conversion, engine panic, unmappable choice) falls back to the network's argmax.
@@ -22,8 +22,8 @@ re-implementation; taunt / encore / confusion / partial-trap / disable timers ar
 engine does not model most of them); substitute HP is assumed to be 1/4 max HP; weather from abilities is
 permanent (gen4), other weather lasts 5 turns from when we first saw it.
 
-    python -m gloria.search runs/<run>/best_model.zip --opponent heuristic --n-battles 100
-    python -m gloria.search runs/<run>/best_model.zip --opponent search --opp-ms 300 --opp-prior-weight 0.5
+    python -m porygon.search runs/<run>/best_model.zip --opponent heuristic --n-battles 100
+    python -m porygon.search runs/<run>/best_model.zip --opponent search --opp-ms 300 --opp-prior-weight 0.5
 
 Defaults (1000 ms, 4 samples, prior_weight 0.25, no top-k) come from head-to-head tuning: prior 0.25 beat 0.5
 (which beat 1.0 and top-k 3), 0.1 and 8 samples were no better, 1000 ms beat 300 ms.
@@ -52,12 +52,12 @@ from poke_env.player import BattleOrder, DefaultBattleOrder, Player
 from stable_baselines3 import PPO
 from stable_baselines3.common.policies import ActorCriticPolicy
 
-from gloria.encoder import embed_battle
-from gloria.engine_worker import EnginePool
-from gloria.env import PolicyPlayer, local_server
-from gloria.evaluate import BASELINES
+from porygon.encoder import embed_battle
+from porygon.engine_worker import EnginePool
+from porygon.env import PolicyPlayer, local_server
+from porygon.evaluate import BASELINES
 
-log = logging.getLogger("gloria.search")
+log = logging.getLogger("porygon.search")
 GEN = GenData.from_gen(4)
 SETS_PATH = Path(__file__).resolve().parents[2] / "pokemon-showdown/data/random-battles/gen4/sets.json"
 UNION_PATH = Path(__file__).parent / "data/gen4randombattle_sets.json"

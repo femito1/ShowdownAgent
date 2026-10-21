@@ -1,6 +1,6 @@
 """Win rates of a trained policy against poke-env's baseline bots.
 
-    python -m gloria.evaluate runs/<run>/best_model.zip --n-battles 500
+    python -m porygon.evaluate runs/<run>/best_model.zip --n-battles 500
 """
 
 import argparse
@@ -10,7 +10,7 @@ from poke_env.player import MaxBasePowerPlayer, Player, RandomPlayer, SimpleHeur
 from stable_baselines3 import PPO
 from stable_baselines3.common.policies import ActorCriticPolicy
 
-from gloria.env import PolicyPlayer, local_server
+from porygon.env import PolicyPlayer, local_server
 
 BASELINES: dict[str, type[Player]] = {
     "random": RandomPlayer,

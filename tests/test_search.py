@@ -13,8 +13,8 @@ from poke_env.battle import Battle  # noqa: E402
 from poke_env.player import SimpleHeuristicsPlayer  # noqa: E402
 from stable_baselines3 import PPO  # noqa: E402
 
-from gloria.env import local_server  # noqa: E402
-from gloria.search import History, SearchPlayer, convert, sample_species, species_info  # noqa: E402
+from porygon.env import local_server  # noqa: E402
+from porygon.search import History, SearchPlayer, convert, sample_species, species_info  # noqa: E402
 
 MODEL = Path(__file__).resolve().parents[1] / "runs/20261019-185359/best_model.zip"
 START = """|player|p1|me|

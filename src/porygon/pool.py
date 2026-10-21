@@ -2,7 +2,7 @@
 learner keeps beating old strategies instead of only chasing its latest self (fictitious play).
 
 Seed a pool from existing checkpoints:
-    python -m gloria.pool runs/<run>/checkpoints/*.zip --out runs/pool
+    python -m porygon.pool runs/<run>/checkpoints/*.zip --out runs/pool
 """
 
 import argparse
@@ -17,8 +17,8 @@ from poke_env.environment import SingleAgentWrapper
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import SubprocVecEnv
 
-from gloria.env import PolicyPlayer, SelfPlayEnv, local_server
-from gloria.model import MaskedPolicy
+from porygon.env import PolicyPlayer, SelfPlayEnv, local_server
+from porygon.model import MaskedPolicy
 
 
 class PoolOpponent(Player):

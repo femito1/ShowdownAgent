@@ -25,7 +25,7 @@ done
 
 if [ -f "$ROOT/$RUN/final_model.zip" ]; then
   PATH=$HOME/.local/bin:$PATH runpodctl pod delete "$POD" >> "$ROOT/logs/save_and_delete.log" 2>&1 && log "pod $POD deleted"
-  crontab -l | grep -v gloria-pull | crontab - && log "cron pull removed"
+  crontab -l | grep -v porygon-pull | crontab - && log "cron pull removed"
 else
   log "final_model.zip not copied: pod left running so nothing is lost"
 fi

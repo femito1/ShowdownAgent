@@ -18,7 +18,7 @@ sync_once() {
   ls -t "$POOL_DIR"/*.pt 2>/dev/null | head -3 | xargs -r cp -t "$tmp/pool/"
   grep "eval @" "$RUN/train.log" > "$tmp/evals.txt" 2>/dev/null
   (cd "$tmp" && git init -q -b main && git add -A \
-     && git -c user.name=gloria-pod -c user.email=pod@localhost commit -q -m "$(basename "$RUN") @ $(date -u +%FT%TZ)" \
+     && git -c user.name=porygon-pod -c user.email=pod@localhost commit -q -m "$(basename "$RUN") @ $(date -u +%FT%TZ)" \
      && git push -q -f "$REMOTE" main) && echo "$(date -u +%T) synced $(du -sh "$tmp" | cut -f1)" || echo "$(date -u +%T) sync FAILED"
   rm -rf "$tmp"
 }

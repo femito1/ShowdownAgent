@@ -23,7 +23,7 @@ def gql(query):
 def deploy(gpu, vcpu):
     q = ('mutation { podFindAndDeployOnDemand(input: { cloudType: COMMUNITY, gpuCount: 1, gpuTypeId: %s, '
          'minVcpuCount: %d, minMemoryInGb: 16, containerDiskInGb: 30, volumeInGb: 5, volumeMountPath: "/workspace", '
-         'name: "gloria-train", imageName: "runpod/pytorch:1.0.3-cu1281-torch291-ubuntu2404", startSsh: true, '
+         'name: "porygon-train", imageName: "runpod/pytorch:1.0.3-cu1281-torch291-ubuntu2404", startSsh: true, '
          'ports: "22/tcp", dockerArgs: %s, env: [{key: "RUNPOD_API_KEY", value: "%s"}] }) '
          '{ id costPerHr vcpuCount } }') % (json.dumps(gpu), vcpu, json.dumps(GUARD), KEY)
     return (gql(q).get("data") or {}).get("podFindAndDeployOnDemand")

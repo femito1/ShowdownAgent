@@ -13,7 +13,7 @@ from stable_baselines3.common.vec_env import VecEnv
 from supersuit.vector import MakeCPUAsyncConstructor
 from supersuit.vector.sb3_vector_wrapper import SB3VecEnvWrapper
 
-from gloria.encoder import OBS_DIM, embed_battle
+from porygon.encoder import OBS_DIM, embed_battle
 
 
 def local_server(port: int) -> ServerConfiguration:
