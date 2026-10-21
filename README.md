@@ -17,67 +17,90 @@ Differences from the thesis: a transformer over field + 12 Pokémon tokens inste
 learned embeddings for species/moves/items/abilities, a movepool prior for unrevealed opponent
 sets (from Showdown's random-battle data), and poke-env's slot-based 10-action space.
 
-## Results (gen4randombattle, 60M self-play steps, 2026-10-20)
-- **vs baseline bots** (training evals, 200 battles): 83.5% vs `SimpleHeuristicsPlayer`, 95% vs
-  `MaxBasePowerPlayer` — on par with the thesis (~80% at 40M, ~85% at 150M steps).
+## Results (gen4randombattle)
+- **Raw network** (PPO, 60M steps): 83.5% vs `SimpleHeuristicsPlayer`, 95% vs `MaxBasePowerPlayer`
+  (200 battles each) — on par with the thesis (~80% at 40M, ~85% at 150M steps). Continued
+  training with the opponent pool holds ~84–86% vs the heuristic bot past 90M steps.
 - **Checkpoint tournament** (`porygon.tournament`, 100 battles per pairing, Bradley-Terry Elo):
   60M 1711 > 46M 1663 > 31M 1635 > 10M 1493 > heuristic 1457 > 2.5M 1346 > max_power 1194.
-  Every checkpoint beats every earlier one, so self-play improves rather than cycles; gains
-  slow after ~30M steps.
-- **Search** (`porygon.search`, network-guided poke-engine MCTS over 4 sampled opponent sets):
-  at 300 ms/move it beats the raw 60M network 75% (200 battles); the tuned defaults (1000 ms,
-  prior weight 0.25, battle-history tracking) beat that config 59% head-to-head (150) and the
-  heuristic bot 97% (100).
-- **vs Foul Play** (pmariglia's open-source search bot, 1000 ms/move, `scripts/vs_foulplay.py`):
-  the search player scores 49% (204 battles; 48% when Foul Play searches on 4 cores), the raw
+  Every checkpoint beats every earlier one; gains slow after ~30M steps.
+- **Search** (`porygon.search`, defaults 1000 ms/move, 4 sampled opponent sets, prior weight
+  0.25): beats the raw network ~75% head-to-head and the heuristic bot 97%.
+- **vs Foul Play** (pmariglia's search bot, 1000 ms/move): search player 49% (204 battles), raw
   network 16.5% (200).
-- **Ladder**: 13-7 in the first 20 real games (Showdown also counts 5 forfeits from dropped
-  connections). Showdown locks datacenter IPs, so ladder games must run from a home connection.
+- **Ladder**: 13-7 with the raw 60M network. Showdown locks datacenter IPs, so ladder games
+  must run from a home connection.
 
 ## Layout
 | | |
 |---|---|
 | `src/porygon/encoder.py` | battle → flat observation (field token + 12 mon tokens) |
-| `src/porygon/model.py` | `BattleTransformer` features extractor, `MaskedPolicy` |
+| `src/porygon/model.py` | `BattleTransformer` features extractor, `MaskedPolicy` (per-action pointer head) |
 | `src/porygon/env.py` | `SelfPlayEnv` (poke-env PettingZoo env), vectorised self-play, `PolicyPlayer` |
-| `src/porygon/train.py` | PPO training with eval-vs-baselines and checkpoints |
-| `src/porygon/evaluate.py` | win rates vs Random / MaxBasePower / SimpleHeuristics |
-| `src/porygon/play.py` | play on the official server (ladder / challenges) |
-| `src/porygon/pool.py` | opponent pool: past snapshots + baseline bots |
-| `src/porygon/tournament.py` | round-robin between checkpoints, Elo |
-| `src/porygon/search.py` | `SearchPlayer`: network-guided poke-engine MCTS over sampled determinizations (gen4) |
+| `src/porygon/pool.py` | opponent pool: past policy snapshots + baseline bots |
+| `src/porygon/train.py` | PPO training with eval-vs-baselines, checkpoints, pool snapshots |
+| `src/porygon/search.py` | `SearchPlayer`: network-guided poke-engine MCTS over sampled opponent sets |
 | `src/porygon/engine_worker.py` | poke-engine search subprocesses used by `search.py` |
-| `scripts/` | Showdown server launchers, data builder, RunPod setup |
+| `src/porygon/evaluate.py`, `tournament.py` | win rates vs baseline bots; round-robin Elo |
+| `src/porygon/play.py` | play on the official server (ladder / challenges) |
+| `src/gloria/` | alias of `porygon` (the old name) so checkpoints saved before the rename load |
+| `scripts/slurm_train.sbatch` | training job for the Imperial DoC Slurm cluster |
+| `scripts/sync_results.sh`, `fetch_results.sh` | push a run's results to a git repo / download them |
+| `scripts/pod_*.sh`, `pod_retry_deploy.py` | the same on RunPod |
+| `scripts/vs_foulplay.py`, `ladder_watchdog.sh` | benchmark vs Foul Play; long ladder sessions |
 
 ## Setup
 ```bash
 git submodule update --init            # official smogon/pokemon-showdown
 cd pokemon-showdown && npm install && cd ..
 python -m venv .venv && .venv/bin/pip install -e .
+.venv/bin/pip install poke-engine --no-cache-dir \
+  --config-settings="build-args=--features poke-engine/gen4 --no-default-features"   # for search; needs Rust
 node scripts/build_data.js             # only if the Showdown checkout changes
 ```
 
 ## Train
+Locally (throughput is bound by battle latency, ~3 cores per Showdown server):
 ```bash
-scripts/start_servers.sh 12 8100        # 12 local Showdown servers (stop: scripts/stop_servers.sh)
-python -m porygon.train --n-battles 96 --ports 8100-8111 --total-steps 50_000_000
-tensorboard --logdir runs
+scripts/start_servers.sh 10 8100        # stop: scripts/stop_servers.sh
+python -m porygon.train --n-battles 60 --pool-battles 30 --ports 8100-8109 \
+  --resume runs/<run>/final_model.zip --total-steps 400_000_000
 ```
-Throughput is bound by battle latency in the lockstep vector env, not CPU or GPU: on a 31-vCPU
-RTX 3090 pod, 96 concurrent battles give ~1.4k steps/s (~5M steps/hour).
+`--pool-battles` adds battles against frozen snapshots (one added every `--snapshot-every` steps)
+and baseline bots; seed a pool with `python -m porygon.pool CKPTS... --out DIR`.
 
-Add `--pool-battles N` to also train against an opponent pool (past snapshots, added every
-`--snapshot-every` steps, plus baseline bots); seed it with `python -m porygon.pool CKPTS... --out DIR`.
-
-On RunPod, `scripts/pod_retry_deploy.py` finds a working pod and runs `scripts/pod_launch_resume.sh`;
-the pod pushes results to a private git repo every 20 min (`scripts/sync_results.sh`), fetch them
-with `scripts/fetch_results.sh`, and stops itself when training ends.
+On the Imperial DoC cluster, from the repo copy on `/vol/bitbucket`: put `SHA=<showdown commit>`,
+`RESUME=<zip>`, `POOL=<pool dir>`, `TOTAL=<steps>`, `CHAIN=<follow-up jobs>` in `slurm.env`
+(never `sbatch --export`, which gets jobs held), then `sbatch scripts/slurm_train.sbatch`. The job
+sets itself up, resumes from the newest checkpoint, uses all cores it gets (30 on a 32-core
+request), stops after 70.5 h, and pushes results every 20 min. Fetch them anywhere with
+`scripts/fetch_results.sh` (into `runs/remote/`).
 
 ## Evaluate / play
 ```bash
-python -m porygon.evaluate runs/<run>/best_model.zip --port 8100 --n-battles 500
-python -m porygon.play runs/<run>/best_model.zip --username NAME --password PASS --ladder 50
+python -m porygon.evaluate MODEL --port 8000 --n-battles 500
+python -m porygon.tournament MODEL_A MODEL_B ... --n-battles 100
+python -m porygon.search MODEL --opponent {policy,heuristic,max_power,search} --n-battles 100
+python scripts/vs_foulplay.py MODEL --player search --opponents fpa0 fpa1 ...   # setup in its docstring
+PS_PASSWORD=... scripts/ladder_watchdog.sh USER MODEL TOTAL_GAMES 2              # from a home connection
 ```
+
+## Roadmap
+1. **Finish the current long run** (opponent pool, resumed from 60M; ends ~2026-10-23 16:00 UTC at
+   ~350M steps): fetch it, run a tournament against the 60M/91M models, and re-run the search
+   player vs Foul Play with the newest network.
+2. **Ladder the search player** from a home connection for a real rating (the thesis bot: 1693
+   Elo / 79.5% GXE over 200 games). `play.py` still uses `PolicyPlayer`; switch it to
+   `SearchPlayer`.
+3. **Search fidelity**: poke-engine's gen4 build doesn't model taunt/encore/confusion durations;
+   Substitute HP is assumed ¼; occasional `NonFinite` engine panics (sample skipped). Tune time
+   per move further (1 s beat 0.3 s; more may help).
+4. **Search in training** (expert iteration): use search results as policy targets — the main
+   lever left now that raw self-play has plateaued around 85% vs the heuristic bot.
+5. **Throughput**: the SB3 vector env is lockstep and latency-bound; an asynchronous actor setup
+   would multiply steps per hour.
+6. **gen9randombattle**: encoder, action space (tera) and vocab already support it; start from the
+   gen4 model.
 
 ## Credits
 - Training recipe: Jett Wang, *Winning at Pokémon Random Battles Using Reinforcement Learning*
