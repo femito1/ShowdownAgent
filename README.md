@@ -93,20 +93,23 @@ PS_PASSWORD=... scripts/ladder_watchdog.sh USER MODEL TOTAL_GAMES 2             
 ```
 
 ## Roadmap
-1. **Finish the current long run** (opponent pool, resumed from 60M; ends ~2026-10-23 16:00 UTC at
-   ~350M steps): fetch it, run a tournament against the 60M/91M models, and re-run the search
-   player vs Foul Play with the newest network.
-2. **Ladder the search player** from a home connection for a real rating (the thesis bot: 1693
+1. **Finish the current long run** (opponent pool, resumed from 60M; stops at 300M steps, ~2026-10-23):
+   fetch it, run a tournament against the 60M/91M/121M models, and re-run the search player vs
+   Foul Play with the newest network.
+2. **Throughput decay**: steps/s falls steadily within a training job (1.4k → ~770 over 20 h, with
+   most cores idle and eval time flat) and recovers on restart, so something builds up inside the
+   training processes. Find it locally (py-spy works there), or restart jobs every ~12 h.
+3. **Ladder the search player** from a home connection for a real rating (the thesis bot: 1693
    Elo / 79.5% GXE over 200 games). `play.py` still uses `PolicyPlayer`; switch it to
    `SearchPlayer`.
-3. **Search fidelity**: poke-engine's gen4 build doesn't model taunt/encore/confusion durations;
+4. **Search fidelity**: poke-engine's gen4 build doesn't model taunt/encore/confusion durations;
    Substitute HP is assumed ¼; occasional `NonFinite` engine panics (sample skipped). Tune time
    per move further (1 s beat 0.3 s; more may help).
-4. **Search in training** (expert iteration): use search results as policy targets — the main
-   lever left now that raw self-play has plateaued around 85% vs the heuristic bot.
-5. **Throughput**: the SB3 vector env is lockstep and latency-bound; an asynchronous actor setup
+5. **Search in training** (expert iteration): use search results as policy targets — the main
+   lever left now that gains from raw self-play are slowing.
+6. **Throughput**: the SB3 vector env is lockstep and latency-bound; an asynchronous actor setup
    would multiply steps per hour.
-6. **gen9randombattle**: encoder, action space (tera) and vocab already support it; start from the
+7. **gen9randombattle**: encoder, action space (tera) and vocab already support it; start from the
    gen4 model.
 
 ## Credits
