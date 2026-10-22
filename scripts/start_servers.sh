@@ -18,7 +18,7 @@ for ((i = 0; i < N; i++)); do
 done
 for ((i = 0; i < N; i++)); do
   PORT=$((BASE + i))
-  for ((t = 0; t < 120; t++)); do
+  for ((t = 0; t < 1200; t++)); do  # up to 10 min: startup reads ~1k files, slow on a busy network disk
     grep -q "listening" "$ROOT/logs/showdown-$PORT.log" 2>/dev/null && continue 2
     sleep 0.5
   done
