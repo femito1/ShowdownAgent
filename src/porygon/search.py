@@ -595,12 +595,16 @@ class SearchPlayer(Player):
                 if shares[mask > 0].sum() < 0.5:  # the engine searched mostly illegal options -> desync
                     raise ValueError(f"engine options disagree with the request: {shares} vs mask {mask}")
                 action = self.combine(shares, probs, mask)
+                self.on_decision(battle, probs, mask, shares)
                 self.stats["searched"] += 1
                 self.stats["agree"] += action == net_action
             except Exception as e:
                 self.stats["fallbacks"] += 1
                 log.warning("search failed in %s turn %d, using the network: %s", battle.battle_tag, battle.turn, e)
         return SinglesEnv.action_to_order(np.int64(action), battle, strict=False)
+
+    def on_decision(self, battle: Battle, probs: np.ndarray, mask: np.ndarray, shares: np.ndarray) -> None:
+        """Called after every searched decision; `porygon.expert` records them as training targets."""
 
     def _battle_finished_callback(self, battle: AbstractBattle) -> None:
         self.weather_seen.pop(battle.battle_tag, None)

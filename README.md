@@ -42,10 +42,11 @@ sets (from Showdown's random-battle data), and poke-env's slot-based 10-action s
 | `src/porygon/train.py` | PPO training with eval-vs-baselines, checkpoints, pool snapshots |
 | `src/porygon/search.py` | `SearchPlayer`: network-guided poke-engine MCTS over sampled opponent sets |
 | `src/porygon/engine_worker.py` | poke-engine search subprocesses used by `search.py` |
+| `src/porygon/expert.py` | expert iteration: search-vs-search training data, distillation into a checkpoint |
 | `src/porygon/evaluate.py`, `tournament.py` | win rates vs baseline bots; round-robin Elo |
 | `src/porygon/play.py` | play on the official server (ladder / challenges) |
 | `src/gloria/` | alias of `porygon` (the old name) so checkpoints saved before the rename load |
-| `scripts/slurm_train.sbatch` | training job for the Imperial DoC Slurm cluster |
+| `scripts/slurm_train.sbatch`, `slurm_expert.sbatch` | training / expert-iteration jobs for the Imperial DoC Slurm cluster |
 | `scripts/sync_results.sh`, `fetch_results.sh` | push a run's results to a git repo / download and archive them |
 | `scripts/pod_*.sh`, `pod_retry_deploy.py` | the same on RunPod |
 | `scripts/vs_foulplay.py`, `ladder_watchdog.sh` | benchmark vs Foul Play; long ladder sessions |
@@ -83,13 +84,29 @@ pool snapshots, so the fetch also copies them into `runs/archive/` (never overwr
 history stays on the cluster (`runs/<run>/checkpoints/` every 5M steps, `$POOL/*.pt` every 2.5M)
 for `rsync`.
 
+## Expert iteration
+Distil the search player into the network: search-vs-search games record every searched decision
+(observation, the move distribution search played, and the shaped return PPO would assign), then
+the checkpoint is trained toward them. The output is a normal PPO checkpoint that PPO can resume.
+```bash
+python -m porygon.expert generate MODEL --games 9000 --out data/round1 --ports 8100-8103   # 300 ms x 4 samples
+python -m porygon.expert distill MODEL data/round1 --out runs/round1/distilled.zip      # --temperature 0.25
+```
+Raw visit shares are much flatter than the move search plays (entropy ~1.2 vs the network's
+~0.25 nats), so `distill` sharpens them (`--temperature`). On the cluster: `EXPERT_MODEL=<zip>`
+(and optionally `EXPERT_GAMES`, `EXPERT_MS`) in `slurm.env`, then `sbatch scripts/slurm_expert.sbatch`;
+9000 battles (~1M decisions) take ~12 h on 30 cores. Search scores positions with poke-engine's own
+evaluation, so gains won't compound over rounds the way AlphaZero's do; that would need the
+network's value inside the search.
+
 ## Evaluate / play
 ```bash
 python -m porygon.evaluate MODEL --port 8000 --n-battles 500 [--anchor OLD_MODEL]
 python -m porygon.tournament MODEL_A MODEL_B ... --n-battles 100   # .zip checkpoints or pool .pt
 python -m porygon.search MODEL --opponent {policy,heuristic,max_power,search} --n-battles 100
+python -m porygon.play MODEL --username USER --ladder 50 --search                # search player on the ladder
 python scripts/vs_foulplay.py MODEL --player search --opponents fpa0 fpa1 ...   # setup in its docstring
-PS_PASSWORD=... scripts/ladder_watchdog.sh USER MODEL TOTAL_GAMES 2              # from a home connection
+PS_PASSWORD=... PLAY_ARGS=--search scripts/ladder_watchdog.sh USER MODEL TOTAL_GAMES 4   # from a home connection
 ```
 
 ## Roadmap
@@ -100,13 +117,14 @@ PS_PASSWORD=... scripts/ladder_watchdog.sh USER MODEL TOTAL_GAMES 2             
    most cores idle and eval time flat) and recovers on restart, so something builds up inside the
    training processes. Find it locally (py-spy works there), or restart jobs every ~12 h.
 3. **Ladder the search player** from a home connection for a real rating (the thesis bot: 1693
-   Elo / 79.5% GXE over 200 games). `play.py` still uses `PolicyPlayer`; switch it to
-   `SearchPlayer`.
+   Elo / 79.5% GXE over 200 games): `play.py --search`, on the dedicated account `porygon-agent`.
+   Its first searches found no match for 40+ min while gen4 games were running; find out why.
 4. **Search fidelity**: poke-engine's gen4 build doesn't model taunt/encore/confusion durations;
    Substitute HP is assumed ¼; occasional `NonFinite` engine panics (sample skipped). Tune time
    per move further (1 s beat 0.3 s; more may help).
-5. **Search in training** (expert iteration): use search results as policy targets — the main
-   lever left now that gains from raw self-play are slowing.
+5. **Expert iteration** (`porygon.expert`, built and smoke-tested): run a round on the cluster
+   from the 300M model, then evaluate the distilled network (tournament vs the source, search
+   head-to-head, Foul Play). If it is stronger, resume PPO from it.
 6. **Throughput**: the SB3 vector env is lockstep and latency-bound; an asynchronous actor setup
    would multiply steps per hour.
 7. **gen9randombattle**: encoder, action space (tera) and vocab already support it; start from the
