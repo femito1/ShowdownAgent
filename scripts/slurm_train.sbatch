@@ -54,15 +54,37 @@ LATEST=$(ls -t runs/2*/checkpoints/*.zip runs/2*/final_model.zip "${RESUME:-/non
 RUN=runs/$(date +%Y%m%d-%H%M%S)-$SLURM_JOB_ID; mkdir -p "$RUN"
 echo "resuming from ${LATEST:-scratch}"
 SYNC_REMOTE=${SYNC_REMOTE:-git@github.com:femito1/porygon-runs.git}
-export SYNC_KEY=${SYNC_KEY:-$HOME/.ssh/porygon_runs_deploy} POOL_DIR=${POOL:-$RUN/pool}
+export SYNC_KEY=${SYNC_KEY:-$HOME/.ssh/porygon_runs_deploy}
+POOL_NFS=${POOL:-$RUN/pool}; mkdir -p "$POOL_NFS"
 ANCHOR=${ANCHOR:-${RESUME:-}}
-scripts/sync_results.sh "$RUN" "$SYNC_REMOTE" >> "$RUN/sync.log" 2>&1 &
+
+# The shared disk can stall for minutes, so the run and pool live on the node (tmpfs /tmp, counts
+# toward --mem) and are mirrored to $RUN / $POOL_NFS every 10 min and at the end; resuming reads
+# the mirror. Locally only the two newest checkpoints are kept once mirrored.
+LOCAL=${TMPDIR:-/tmp}/porygon-$SLURM_JOB_ID; mkdir -p "$LOCAL/run" "$LOCAL/pool"
+cp -p "$POOL_NFS"/*.pt "$LOCAL/pool/" 2>/dev/null || true
+export POOL_DIR=$LOCAL/pool
+mirror() {  # status = the rsyncs'; pruning (no checkpoints yet is fine) must not fail it
+  rsync -a "$LOCAL/run/" "$RUN/" && rsync -a "$LOCAL/pool/" "$POOL_NFS/" || return 1
+  { ls -t "$LOCAL"/run/checkpoints/*.zip 2>/dev/null || true; } | tail -n +3 | xargs -r rm -f
+}
+( while sleep 600; do mirror || echo "$(date -u +%T) mirror FAILED" >&2; done ) &
+MIRROR=$!
+cleanup() {  # also on scancel (SIGTERM): Slurm allows ~30 s before SIGKILL, enough for an incremental rsync
+  kill $MIRROR 2>/dev/null || true
+  mirror && rm -rf "$LOCAL"  # keep the local copy if the mirror failed
+  pkill -u "$USER" -f "pokemon-showdown start --skip-build --no-security" || true
+}
+trap cleanup EXIT
+trap 'exit 143' TERM
+scripts/sync_results.sh "$LOCAL/run" "$SYNC_REMOTE" >> "$RUN/sync.log" 2>&1 &
 
 .venv/bin/python -m porygon.train --ports "$BASE-$((BASE + N_SERVERS - 1))" --n-battles "$SELFPLAY" \
-  --pool-battles "$POOL_BATTLES" --pool-dir "$POOL_DIR" --run-dir "$RUN" \
+  --pool-battles "$POOL_BATTLES" --pool-dir "$LOCAL/pool" --run-dir "$LOCAL/run" \
   ${LATEST:+--resume "$LATEST"} ${ANCHOR:+--anchor "$ANCHOR"} --total-steps "${TOTAL:-400000000}" --max-hours 70.5 --checkpoint-every 5000000 \
-  "$@" 2>&1 | tee "$RUN/train.log" || true
-scripts/sync_results.sh "$RUN" "$SYNC_REMOTE" once >> "$RUN/sync.log" 2>&1
+  "$@" 2>&1 | tee "$LOCAL/run/train.log" || true
+scripts/sync_results.sh "$LOCAL/run" "$SYNC_REMOTE" once >> "$RUN/sync.log" 2>&1
+kill $MIRROR 2>/dev/null || true; mirror || true
 
 # --- continue in a new job (walltime is 72 h) unless the chain is used up or training is done ---
 STEPS=$(grep -oE "total_timesteps +\| +[0-9]+" "$RUN/train.log" | tail -1 | grep -oE "[0-9]+$" || echo 0)
