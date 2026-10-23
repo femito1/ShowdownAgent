@@ -176,7 +176,8 @@ class AsyncBattles(VecEnv):
 def fill_buffer(buffer: DictRolloutBuffer, segments: dict, boot: dict, gamma: float) -> None:
     """Concatenate segments into a (buffer_size, 1) rollout buffer and compute GAE. Extra
     transitions beyond buffer_size are dropped from the ends of the longest segments (their
-    value becomes that segment's bootstrap)."""
+    value becomes that segment's bootstrap). Writes the buffer arrays directly: per-transition
+    `buffer.add` and SB3's 1-env GAE loop took ~6 s per 40k-step rollout."""
     excess = sum(map(len, segments.values())) - buffer.buffer_size
     while excess > 0:
         key = max(segments, key=lambda k: len(segments[k]))
@@ -184,16 +185,42 @@ def fill_buffer(buffer: DictRolloutBuffer, segments: dict, boot: dict, gamma: fl
         if not segments[key]:
             del segments[key]
         excess -= 1
-    buffer.reset()
+    rows = [t for seg in segments.values() for t in seg]
+    n = len(rows)
+    assert n == buffer.buffer_size, f"{n} transitions for a {buffer.buffer_size}-step buffer"
+    values = np.array([t[2] for t in rows], dtype=np.float32)
+    rewards = np.array([t[4] for t in rows], dtype=np.float32)
+    dones = np.array([t[5] for t in rows], dtype=bool)
+    starts = np.zeros(n, dtype=np.float32)
+    next_values = np.zeros(n, dtype=np.float32)  # V(s') where the segment continues, 0 if terminal
+    i = 0
     for key, seg in segments.items():
-        for i, (o, a, v, lp, r, done) in enumerate(seg):
-            start = i == 0 or seg[i - 1][5]
-            if i == len(seg) - 1 and not done:
-                r += gamma * float(boot[key])  # segment cut mid-episode
-            buffer.add({k: x[None] for k, x in o.items()}, np.array([[a]]), np.array([r], dtype=np.float32),
-                       np.array([start], dtype=np.float32), torch.tensor([[v]]), torch.tensor([lp]))
-    # every segment's tail is either terminal or already bootstrapped
-    buffer.compute_returns_and_advantage(last_values=torch.zeros(1, 1), dones=np.array([True]))
+        j = i + len(seg)
+        starts[i] = 1.0
+        starts[i + 1:j] = dones[i:j - 1]
+        next_values[i:j - 1] = values[i + 1:j] * ~dones[i:j - 1]
+        if not dones[j - 1]:
+            next_values[j - 1] = float(boot[key])  # segment cut mid-episode: bootstrap
+        i = j
+    deltas = rewards + gamma * next_values - values
+    # GAE runs backwards within segments and episodes: it is cut wherever the next row starts one
+    carry = gamma * buffer.gae_lambda * np.append(1.0 - starts[1:], 0.0)
+    advantages = np.zeros(n, dtype=np.float32)
+    gae = 0.0
+    for t in range(n - 1, -1, -1):
+        gae = deltas[t] + carry[t] * gae
+        advantages[t] = gae
+    buffer.reset()
+    for k in buffer.observations:
+        buffer.observations[k][:n, 0] = np.stack([t[0][k] for t in rows])
+    buffer.actions[:n, 0, 0] = [t[1] for t in rows]
+    buffer.log_probs[:n, 0] = [t[3] for t in rows]
+    buffer.values[:n, 0] = values
+    buffer.rewards[:n, 0] = rewards
+    buffer.episode_starts[:n, 0] = starts
+    buffer.advantages[:n, 0] = advantages
+    buffer.returns[:n, 0] = advantages + values
+    buffer.pos, buffer.full = n, True
 
 
 class AsyncPPO(PPO):

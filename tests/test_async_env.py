@@ -45,6 +45,8 @@ def test_segments_match_per_trajectory_gae():
     values = np.array([t[2] for k in segments for t in segments[k]])
     assert buf.returns.flatten() == pytest.approx(np.array(expected) + values, abs=1e-6)
     assert buf.episode_starts.flatten().tolist() == [1, 0, 0, 1, 0, 1, 1]
+    assert buf.values.flatten() == pytest.approx(values) and buf.full and buf.pos == 7
+    assert buf.actions.flatten().tolist() == [1] * 7 and buf.log_probs.flatten() == pytest.approx([-0.5] * 7)
 
 
 def test_excess_transitions_become_bootstrap():
