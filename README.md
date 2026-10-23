@@ -68,7 +68,9 @@ scripts/start_servers.sh 10 8100        # stop: scripts/stop_servers.sh
 python -m porygon.train --n-battles 60 --pool-battles 30 --ports 8100-8109 \
   --resume runs/<run>/final_model.zip --total-steps 400_000_000
 ```
-`--pool-battles` adds battles against frozen snapshots (one added every `--snapshot-every` steps)
+`--async-envs` steps every battle independently (`porygon.async_env`) instead of in lockstep, where
+each step waits for the slowest of ~150 battles; on a cluster node 48 battles went from 1,776 to
+2,940 steps/s. `--pool-battles` adds battles against frozen snapshots (one added every `--snapshot-every` steps)
 and baseline bots; seed a pool with `python -m porygon.pool CKPTS... --out DIR`. `--anchor CKPT`
 also evaluates against a fixed earlier checkpoint and picks `best_model` by that score: the
 baseline bots saturate around 85%, while head-to-head win rates keep showing progress.
@@ -78,7 +80,8 @@ On the Imperial DoC cluster, from the repo copy on `/vol/bitbucket`: put `SHA=<s
 `ANCHOR=<zip or .pt>` (default `RESUME`) in `slurm.env`
 (never `sbatch --export`, which gets jobs held), then `sbatch scripts/slurm_train.sbatch`. The job
 sets itself up, resumes from the newest checkpoint, uses all cores it gets (30 on a 32-core
-request), stops after 70.5 h, and pushes results every 20 min. Fetch them anywhere with
+request), stops after 70.5 h, and pushes results every 20 min; extra arguments go to
+`porygon.train` (e.g. `sbatch scripts/slurm_train.sbatch --async-envs`). Fetch them anywhere with
 `scripts/fetch_results.sh` (into `runs/remote/`). The push holds only the newest checkpoint and
 pool snapshots, so the fetch also copies them into `runs/archive/` (never overwritten); the full
 history stays on the cluster (`runs/<run>/checkpoints/` every 5M steps, `$POOL/*.pt` every 2.5M)
@@ -113,9 +116,9 @@ PS_PASSWORD=... PLAY_ARGS=--search scripts/ladder_watchdog.sh USER MODEL TOTAL_G
 1. **Finish the current long run** (opponent pool, resumed from 60M; stops at 300M steps, ~2026-10-23):
    fetch it, run a tournament against the 60M/91M/121M models, and re-run the search player vs
    Foul Play with the newest network.
-2. **Throughput decay**: steps/s falls steadily within a training job (1.4k → ~770 over 20 h, with
-   most cores idle and eval time flat) and recovers on restart, so something builds up inside the
-   training processes. Find it locally (py-spy works there), or restart jobs every ~12 h.
+2. **Throughput decay**: lockstep steps/s fell within a job (1.4k → ~770 over 20 h) while CPU per
+   step and memory stayed flat, i.e. growing waits on the slowest battle. Check whether
+   `--async-envs` (first used from 278M) removes it; if not, restart jobs every ~12 h.
 3. **Ladder the search player** from a home connection for a real rating (the thesis bot: 1693
    Elo / 79.5% GXE over 200 games): `play.py --search`, on the dedicated account `porygon-agent`.
    Its first searches found no match for 40+ min while gen4 games were running; find out why.
@@ -125,8 +128,8 @@ PS_PASSWORD=... PLAY_ARGS=--search scripts/ladder_watchdog.sh USER MODEL TOTAL_G
 5. **Expert iteration** (`porygon.expert`, built and smoke-tested): run a round on the cluster
    from the 300M model, then evaluate the distilled network (tournament vs the source, search
    head-to-head, Foul Play). If it is stronger, resume PPO from it.
-6. **Throughput**: the SB3 vector env is lockstep and latency-bound; an asynchronous actor setup
-   would multiply steps per hour.
+6. **Throughput**: with `--async-envs`, try more battles per job (CPU allows ~3.5k steps/s on 30
+   cores at ~8.5 CPU-ms per step); make it the default once a full job confirms it.
 7. **gen9randombattle**: encoder, action space (tera) and vocab already support it; start from the
    gen4 model.
 
