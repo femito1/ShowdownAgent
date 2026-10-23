@@ -7,6 +7,7 @@ Reinforcement Learning" (MIT MEng thesis, 2024), Table 3.1.
 
 import argparse
 import time
+from functools import partial
 from pathlib import Path
 
 import torch
@@ -14,6 +15,7 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList, CheckpointCallback
 from stable_baselines3.common.vec_env import VecMonitor
 
+from porygon.async_env import AsyncBattles, AsyncPPO, pool_battle, selfplay_battle
 from porygon.env import ConcatVecEnv, make_selfplay_vec_env
 from porygon.evaluate import Evaluator
 from porygon.model import MaskedPolicy, load_policy
@@ -114,6 +116,8 @@ def main():
     p.add_argument("--snapshot-every", type=int, default=2_500_000, help="add policy to the pool every N steps")
     p.add_argument("--n-cpus", type=int, default=None, help="env worker processes (default: one per battle)")
     p.add_argument("--ports", default="8000", help="Showdown server ports, e.g. 8000-8007")
+    p.add_argument("--async-envs", action="store_true",
+                   help="battles step independently (porygon.async_env) instead of in lockstep")
     p.add_argument("--total-steps", type=int, default=150_000_000)
     p.add_argument("--rollout", type=int, default=78 * 512, help="transitions per PPO update")
     p.add_argument("--batch-size", type=int, default=1024)
@@ -150,15 +154,25 @@ def main():
     shaping = dict(zip(("fainted_value", "hp_value", "status_value"), args.shaping))
     args.run_dir.mkdir(parents=True, exist_ok=True)
     pool_dir = args.pool_dir or args.run_dir / "pool"
-    env = make_selfplay_vec_env(args.n_battles, ports, args.format, shaping, args.n_cpus)
     if args.pool_battles:
         pool_dir.mkdir(parents=True, exist_ok=True)
-        env = ConcatVecEnv([env, make_pool_vec_env(args.pool_battles, ports[::-1], args.format, pool_dir,
-                                                   shaping, args.p_baseline)])
-    env = VecMonitor(env)
+    if args.async_envs:  # same battles and ports as the lockstep envs below, one worker process each
+        env = AsyncBattles(
+            [(partial(selfplay_battle, ports[i % len(ports)], args.format, shaping), "fork")
+             for i in range(args.n_battles)]
+            + [(partial(pool_battle, ports[::-1][i % len(ports)], args.format, shaping, pool_dir, args.p_baseline),
+                "spawn") for i in range(args.pool_battles)])
+        algo = AsyncPPO
+    else:
+        env = make_selfplay_vec_env(args.n_battles, ports, args.format, shaping, args.n_cpus)
+        if args.pool_battles:
+            env = ConcatVecEnv([env, make_pool_vec_env(args.pool_battles, ports[::-1], args.format, pool_dir,
+                                                       shaping, args.p_baseline)])
+        env = VecMonitor(env)
+        algo = PPO
 
     if args.resume:
-        model = PPO.load(args.resume, env=env, device=args.device)
+        model = algo.load(args.resume, env=env, device=args.device)
         model.learning_rate, model.lr_schedule = thesis_lr, thesis_lr  # schedules aren't pickled reliably
         n_steps = max(1, args.rollout // env.num_envs)  # keep ~args.rollout transitions per update
         if n_steps != model.n_steps:
@@ -167,7 +181,7 @@ def main():
                 n_steps, model.observation_space, model.action_space, device=model.device, gamma=model.gamma,
                 gae_lambda=model.gae_lambda, n_envs=env.num_envs, **model.rollout_buffer_kwargs)
     else:
-        model = PPO(
+        model = algo(
             MaskedPolicy, env,
             learning_rate=thesis_lr,
             n_steps=max(1, args.rollout // env.num_envs),
@@ -186,8 +200,8 @@ def main():
             verbose=1,
         )
     n_params = sum(p.numel() for p in model.policy.parameters())
-    print(f"{env.num_envs} sub-envs ({args.n_battles} self-play + {args.pool_battles} pool battles) on ports {ports}, "
-          f"n_steps={model.n_steps}, params={n_params:,}, device={model.device}")
+    print(f"{'async' if args.async_envs else 'lockstep'}: {args.n_battles} self-play + {args.pool_battles} pool battles "
+          f"on ports {ports}, n_steps={model.n_steps} x {env.num_envs} envs, params={n_params:,}, device={model.device}")
 
     callbacks = CallbackList([
         CheckpointCallback(max(1, args.checkpoint_every // env.num_envs), str(args.run_dir / "checkpoints"),
