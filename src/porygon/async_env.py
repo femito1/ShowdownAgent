@@ -8,11 +8,19 @@ trainer batches whatever requests are waiting into one network forward pass and 
 Each battle side's transitions form a separate trajectory segment. A rollout concatenates the
 segments in SB3's rollout buffer (n_envs = 1) with an episode start at every segment boundary and,
 where a segment ends mid-episode, gamma * V(next observation) added to its last reward: the
-same bootstrapping SB3 uses for time limits, so PPO's GAE and update run unchanged. Battles
-pause while PPO trains (on-policy, as in lockstep).
+same bootstrapping SB3 uses for time limits, so PPO's GAE and update run unchanged.
+
+By default battles pause while PPO trains (on-policy, as in lockstep). With `overlap_update` a
+background thread keeps collecting the next rollout during the update, acting with a copy of
+the network that is refreshed before each rollout. Training data is then at most one update old;
+PPO's ratio uses the stored log-probs of the policy that acted, so it stays a valid importance
+ratio, only the clipping is relative to that slightly older policy.
 """
 
+import copy
 import multiprocessing as mp
+import queue
+import threading
 from collections import defaultdict
 from multiprocessing.connection import Connection, wait
 from typing import Any, Callable
@@ -224,30 +232,86 @@ def fill_buffer(buffer: DictRolloutBuffer, segments: dict, boot: dict, gamma: fl
 
 
 class AsyncPPO(PPO):
-    """PPO whose rollouts come from `AsyncBattles` instead of a lockstep VecEnv."""
+    """PPO whose rollouts come from `AsyncBattles` instead of a lockstep VecEnv. Set
+    `overlap_update = True` to keep battles running during the PPO update (see the module doc)."""
+
+    overlap_update = False
+
+    def _excluded_save_params(self) -> list[str]:
+        return super()._excluded_save_params() + ["_actor", "_actor_lock", "_rollouts", "_collector", "_stop"]
 
     def collect_rollouts(self, env: AsyncBattles, callback: BaseCallback, rollout_buffer, n_rollout_steps: int) -> bool:
         self.policy.set_training_mode(False)
         callback.on_rollout_start()
-
-        def on_transitions(n: int, finished: list[dict]) -> bool:
-            if finished:
-                self.ep_info_buffer.extend(finished)
+        if self.overlap_update:
+            segments, boot, finished, n = self._next_background_rollout(env, n_rollout_steps)
+            self.ep_info_buffer.extend(finished)
             ok = True
             for _ in range(n):
                 self.num_timesteps += 1
                 ok = callback.on_step() and ok
-            return ok
+        else:
+            def on_transitions(n: int, finished: list[dict]) -> bool:
+                if finished:
+                    self.ep_info_buffer.extend(finished)
+                ok = True
+                for _ in range(n):
+                    self.num_timesteps += 1
+                    ok = callback.on_step() and ok
+                return ok
 
-        threads = torch.get_num_threads()
-        torch.set_num_threads(1)  # many small forwards: extra threads only fight the battle workers for CPU
-        try:
-            segments, boot, ok = env.collect(self.policy, n_rollout_steps, on_transitions)
-        finally:
-            torch.set_num_threads(threads)
+            threads = torch.get_num_threads()
+            torch.set_num_threads(1)  # many small forwards: extra threads only fight the battle workers for CPU
+            try:
+                segments, boot, ok = env.collect(self.policy, n_rollout_steps, on_transitions)
+            finally:
+                torch.set_num_threads(threads)
         if not ok:
+            if self.overlap_update:
+                self._stop.set()
             return False
         fill_buffer(rollout_buffer, segments, boot, self.gamma)
         callback.update_locals(locals())
         callback.on_rollout_end()
         return True
+
+    def _next_background_rollout(self, env: AsyncBattles, n: int):
+        """Refresh the acting copy with the freshly trained weights, then take the rollout the
+        background thread has been collecting (it starts the next one as soon as this is taken)."""
+        if getattr(self, "_collector", None) is None:
+            torch.set_num_threads(1)  # collection never stops: keep CPU threads for the battle workers
+            self._actor = copy.deepcopy(self.policy)
+            self._actor.set_training_mode(False)
+            self._actor_lock = threading.Lock()
+            self._rollouts: queue.Queue = queue.Queue(maxsize=1)
+            self._stop = threading.Event()
+            self._collector = threading.Thread(target=self._collect_forever, args=(env, n), daemon=True)
+            self._collector.start()
+        else:
+            with self._actor_lock:
+                self._actor.load_state_dict(self.policy.state_dict())
+        item = self._rollouts.get()
+        self._rollouts.task_done()  # lets the collector start the next rollout
+        if isinstance(item, BaseException):
+            raise item
+        return item
+
+    def _collect_forever(self, env: AsyncBattles, n: int) -> None:
+        actor_lock = self._actor_lock
+
+        class LockedActor:  # forward passes never see a half-loaded state dict
+            device = self._actor.device
+
+            def __call__(_, batch):
+                with actor_lock:
+                    return self._actor(batch)
+
+        try:
+            while not self._stop.is_set():
+                finished: list[dict] = []
+                segments, boot, _ = env.collect(LockedActor(), n, lambda k, f: finished.extend(f) or True)
+                self._rollouts.put((segments, boot, finished, sum(map(len, segments.values()))))
+                self._rollouts.join()  # at most one rollout ahead: data is <= one update old
+        except BaseException as e:  # surface worker failures in the training thread
+            if not self._stop.is_set():
+                self._rollouts.put(e)

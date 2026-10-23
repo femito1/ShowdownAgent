@@ -118,6 +118,8 @@ def main():
     p.add_argument("--ports", default="8000", help="Showdown server ports, e.g. 8000-8007")
     p.add_argument("--async-envs", action="store_true",
                    help="battles step independently (porygon.async_env) instead of in lockstep")
+    p.add_argument("--overlap-update", action="store_true",
+                   help="with --async-envs: keep battles running during the PPO update (data <= 1 update old)")
     p.add_argument("--total-steps", type=int, default=150_000_000)
     p.add_argument("--rollout", type=int, default=78 * 512, help="transitions per PPO update")
     p.add_argument("--batch-size", type=int, default=1024)
@@ -199,8 +201,11 @@ def main():
             device=args.device,
             verbose=1,
         )
+    if args.overlap_update:
+        assert args.async_envs, "--overlap-update needs --async-envs"
+        model.overlap_update = True
     n_params = sum(p.numel() for p in model.policy.parameters())
-    print(f"{'async' if args.async_envs else 'lockstep'}: {args.n_battles} self-play + {args.pool_battles} pool battles "
+    print(f"{'async' if args.async_envs else 'lockstep'}{' + overlapped update' if args.overlap_update else ''}: {args.n_battles} self-play + {args.pool_battles} pool battles "
           f"on ports {ports}, n_steps={model.n_steps} x {env.num_envs} envs, params={n_params:,}, device={model.device}")
 
     callbacks = CallbackList([

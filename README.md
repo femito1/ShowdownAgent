@@ -70,7 +70,9 @@ python -m porygon.train --n-battles 60 --pool-battles 30 --ports 8100-8109 \
 ```
 `--async-envs` steps every battle independently (`porygon.async_env`) instead of in lockstep, where
 each step waits for the slowest of ~150 battles; on a cluster node 48 battles went from 1,776 to
-2,940 steps/s. `--pool-battles` adds battles against frozen snapshots (one added every `--snapshot-every` steps)
+2,940 steps/s. `--overlap-update` (with `--async-envs`) also keeps battles running during the PPO
+update, which otherwise takes ~10 of every ~21 s; the training data is then at most one update
+old. `--pool-battles` adds battles against frozen snapshots (one added every `--snapshot-every` steps)
 and baseline bots; seed a pool with `python -m porygon.pool CKPTS... --out DIR`. `--anchor CKPT`
 also evaluates against a fixed earlier checkpoint and picks `best_model` by that score: the
 baseline bots saturate around 85%, while head-to-head win rates keep showing progress.
@@ -128,8 +130,10 @@ PS_PASSWORD=... PLAY_ARGS=--search scripts/ladder_watchdog.sh USER MODEL TOTAL_G
 5. **Expert iteration** (`porygon.expert`, built and smoke-tested): run a round on the cluster
    from the 300M model, then evaluate the distilled network (tournament vs the source, search
    head-to-head, Foul Play). If it is stronger, resume PPO from it.
-6. **Throughput**: with `--async-envs`, try more battles per job (CPU allows ~3.5k steps/s on 30
-   cores at ~8.5 CPU-ms per step); make it the default once a full job confirms it.
+6. **Throughput**: async collection runs at ~4k steps/s but a rollout cycle is ~21 s, ~10 of them
+   the PPO update. Measure `--overlap-update` on a job (untested on the cluster: the shared disk was
+   too slow for an A/B run), watching for GIL contention between the collector thread and the
+   update; then try more battles per job and make the best combination the default.
 7. **gen9randombattle**: encoder, action space (tera) and vocab already support it; start from the
    gen4 model.
 
